@@ -53,48 +53,6 @@ void sendWriteRequestWithOACK(int sock, const std::string &hostname, int port, c
     std::cerr << std::endl;
 }
 
-// Function to send RRQ (Read Request) packet with optional parameters (OACK)
-void sendReadRequestWithOACK(int sock, const std::string &hostname, int port, const std::string &filepath, const std::string &mode, const std::string &options)
-{
-    // Create a buffer for the read request packet
-    std::vector<uint8_t> requestBuffer;
-    requestBuffer.push_back(0); // High byte of opcode (1 for RRQ)
-    requestBuffer.push_back(1); // Low byte of opcode (1 for RRQ)
-    requestBuffer.insert(requestBuffer.end(), filepath.begin(), filepath.end());
-    requestBuffer.push_back(0); // Null-terminate the filepath
-    requestBuffer.insert(requestBuffer.end(), mode.begin(), mode.end());
-    requestBuffer.push_back(0); // Null-terminate the mode
-
-    // Append optional parameters (OACK) if provided
-    if (!options.empty())
-    {
-        requestBuffer.insert(requestBuffer.end(), options.begin(), options.end());
-        requestBuffer.push_back(0); // Null-terminate the options
-    }
-
-    // Create a sockaddr_in structure for the remote server
-    sockaddr_in serverAddr;
-    std::memset(&serverAddr, 0, sizeof(serverAddr));
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(port);
-    inet_pton(AF_INET, hostname.c_str(), &(serverAddr.sin_addr));
-
-    // Send the read request packet
-    ssize_t sentBytes = sendto(sock, requestBuffer.data(), requestBuffer.size(), 0, (struct sockaddr *)&serverAddr, sizeof(serverAddr));
-    if (sentBytes == -1)
-    {
-        std::cerr << "Error: Failed to send RRQ packet." << std::endl;
-        return;
-    }
-
-    std::cerr << "Read Request " << hostname << ":" << port << " \"" << filepath << "\" " << mode;
-    if (!options.empty())
-    {
-        std::cerr << " with options: " << options;
-    }
-    std::cerr << std::endl;
-}
-
 // Function to receive ACK (Acknowledgment) packet and capture the server's port
 bool receiveAck(int sock, uint16_t &receivedBlockID, int &serverPort)
 {
@@ -163,62 +121,6 @@ void sendData(int sock, const std::string &hostname, int port, const std::string
 
     // If you want to print the actual data being sent, you can do so here
     std::cerr << "DATA Content: " << std::string(dataBuffer.begin() + 4, dataBuffer.end()) << std::endl;
-}
-
-// Function to receive DATA packet and send ACK packet
-bool receiveData(int sock, uint16_t &receivedBlockID, std::string &data, int &serverPort)
-{
-    // Create a buffer to receive the DATA packet
-    std::vector<uint8_t> dataBuffer(516); // Maximum size of a DATA packet is 516 bytes
-
-    // Create sockaddr_in structure to store the sender's address
-    sockaddr_in senderAddr;
-    socklen_t senderAddrLen = sizeof(senderAddr);
-
-    // Receive the DATA packet and capture the sender's address
-    ssize_t receivedBytes = recvfrom(sock, dataBuffer.data(), dataBuffer.size(), 0, (struct sockaddr *)&senderAddr, &senderAddrLen);
-    if (receivedBytes == -1)
-    {
-        std::cerr << "Error: Failed to receive DATA." << std::endl;
-        return false;
-    }
-
-    // Check if the received packet is a DATA packet
-    if (receivedBytes < 4 || dataBuffer[0] != 0 || dataBuffer[1] != 3)
-    {
-        std::cerr << "Error: Received packet is not a DATA packet." << std::endl;
-        return false;
-    }
-
-    // Parse the received block ID from the DATA packet
-    receivedBlockID = (dataBuffer[2] << 8) | dataBuffer[3];
-
-    // Capture the server's port from the sender's address
-    serverPort = ntohs(senderAddr.sin_port);
-
-    // Extract the data from the DATA packet
-    data.assign(dataBuffer.begin() + 4, dataBuffer.begin() + receivedBytes);
-
-    std::cerr << "Received DATA with block ID: " << receivedBlockID << " from server port: " << serverPort << std::endl;
-
-    // Send ACK for the received block
-    std::vector<uint8_t> ackBuffer(4);
-    ackBuffer[0] = 0;                             // High byte of opcode (0 for ACK)
-    ackBuffer[1] = 4;                             // Low byte of opcode (4 for ACK)
-    ackBuffer[2] = (receivedBlockID >> 8) & 0xFF; // High byte of block ID
-    ackBuffer[3] = receivedBlockID & 0xFF;        // Low byte of block ID
-
-    // Send ACK packet
-    ssize_t sentBytes = sendto(sock, ackBuffer.data(), ackBuffer.size(), 0, (struct sockaddr *)&senderAddr, sizeof(senderAddr));
-    if (sentBytes == -1)
-    {
-        std::cerr << "Error: Failed to send ACK." << std::endl;
-        return false;
-    }
-
-    std::cerr << "Sent ACK for block ID: " << receivedBlockID << std::endl;
-
-    return true;
 }
 
 // Function to handle errors
@@ -317,53 +219,6 @@ void sendFile(int sock, const std::string &hostname, int port, const std::string
             {
                 transferComplete = true;
             }
-        }
-    }
-
-    // Close the file handle
-    file.close();
-
-    // Close the socket
-    close(sock);
-}
-
-// Function to receive a file from the server
-void receiveFile(int sock, const std::string &hostname, int port, const std::string &localFilePath, const std::string &remoteFilePath, const std::string &mode, const std::string &options)
-{
-    std::ofstream file(localFilePath, std::ios::binary);
-    if (!file)
-    {
-        std::cerr << "Error: Failed to open file for writing." << std::endl;
-        close(sock); // Close the socket on error
-        return;
-    }
-
-    int serverPort = 0; // Variable to capture the server's port
-
-    // Send RRQ packet with optional parameters (OACK)
-    sendReadRequestWithOACK(sock, hostname, port, remoteFilePath, mode, options);
-
-    std::string receivedData; // Buffer to store received data
-    uint16_t receivedBlockID = 0;
-    bool transferComplete = false;
-
-    while (!transferComplete)
-    {
-        // Receive DATA packet and send ACK
-        if (!receiveData(sock, receivedBlockID, receivedData, serverPort))
-        {
-            std::cerr << "Error: Failed to receive DATA or send ACK for block " << receivedBlockID << std::endl;
-            handleError(sock, hostname, port, serverPort, 0, "Failed to receive DATA or send ACK");
-            break;
-        }
-
-        // Write received data to the file
-        file.write(receivedData.c_str(), receivedData.size());
-
-        // Check if this is the last block
-        if (receivedData.size() < 512)
-        {
-            transferComplete = true;
         }
     }
 
