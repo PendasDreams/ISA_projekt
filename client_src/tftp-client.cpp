@@ -11,17 +11,24 @@
 // Define the initial block ID
 uint16_t blockID = 0;
 
-// Funkce pro odeslání RRQ (Read Request) nebo WRQ (Write Request)
-void sendRequestPacket(int sock, const std::string &hostname, int port, const std::string &filepath, const std::string &mode, uint16_t opcode)
+// Function to send WRQ (Write Request) packet with optional parameters (OACK)
+void sendWriteRequestWithOACK(int sock, const std::string &hostname, int port, const std::string &filepath, const std::string &mode, const std::string &options)
 {
-    // Create a buffer for the request packet
+    // Create a buffer for the write request packet
     std::vector<uint8_t> requestBuffer;
-    requestBuffer.push_back((opcode >> 8) & 0xFF); // High byte of opcode
-    requestBuffer.push_back(opcode & 0xFF);        // Low byte of opcode
+    requestBuffer.push_back(0); // High byte of opcode (0 for WRQ)
+    requestBuffer.push_back(2); // Low byte of opcode (2 for WRQ)
     requestBuffer.insert(requestBuffer.end(), filepath.begin(), filepath.end());
     requestBuffer.push_back(0); // Null-terminate the filepath
     requestBuffer.insert(requestBuffer.end(), mode.begin(), mode.end());
     requestBuffer.push_back(0); // Null-terminate the mode
+
+    // Append optional parameters (OACK) if provided
+    if (!options.empty())
+    {
+        requestBuffer.insert(requestBuffer.end(), options.begin(), options.end());
+        requestBuffer.push_back(0); // Null-terminate the options
+    }
 
     // Create a sockaddr_in structure for the remote server
     sockaddr_in serverAddr;
@@ -30,123 +37,73 @@ void sendRequestPacket(int sock, const std::string &hostname, int port, const st
     serverAddr.sin_port = htons(port);
     inet_pton(AF_INET, hostname.c_str(), &(serverAddr.sin_addr));
 
-    // Send the request packet
+    // Send the write request packet
     ssize_t sentBytes = sendto(sock, requestBuffer.data(), requestBuffer.size(), 0, (struct sockaddr *)&serverAddr, sizeof(serverAddr));
     if (sentBytes == -1)
     {
-        std::cerr << "Error: Failed to send request packet." << std::endl;
+        std::cerr << "Error: Failed to send WRQ packet." << std::endl;
         return;
     }
 
-    std::cerr << "Request " << hostname << ":" << port << " \"" << filepath << "\" " << mode << std::endl;
-}
-
-bool waitForAckWithTimeout(int sock, int seconds)
-{
-    fd_set fds;
-    struct timeval timeout;
-    int ret_val;
-
-    FD_ZERO(&fds);
-    FD_SET(sock, &fds);
-
-    timeout.tv_sec = seconds;
-    timeout.tv_usec = 0;
-
-    ret_val = select(sock + 1, &fds, NULL, NULL, &timeout);
-
-    return ret_val > 0;
-}
-
-// Funkce pro odeslání ACK (Acknowledgment)
-void sendAck(int sock, const std::string &hostname, int port, uint16_t blockID)
-{
-    // Vytvoření ACK zprávy
-    uint8_t ackBuffer[4];
-    ackBuffer[0] = 0;                     // High byte of opcode (0 for ACK)
-    ackBuffer[1] = 4;                     // Low byte of opcode (4 for ACK)
-    ackBuffer[2] = (blockID >> 8) & 0xFF; // High byte of block ID
-    ackBuffer[3] = blockID & 0xFF;        // Low byte of block ID
-
-    // Vytvoření sockaddr_in struktury pro vzdálený server (serverAddr)
-    sockaddr_in serverAddr;
-    std::memset(&serverAddr, 0, sizeof(serverAddr));
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(port);
-    inet_pton(AF_INET, hostname.c_str(), &(serverAddr.sin_addr));
-
-    // Odeslání ACK zprávy
-    ssize_t sentBytes = sendto(sock, ackBuffer, sizeof(ackBuffer), 0, (struct sockaddr *)&serverAddr, sizeof(serverAddr));
-    if (sentBytes == -1)
+    std::cerr << "Write Request " << hostname << ":" << port << " \"" << filepath << "\" " << mode;
+    if (!options.empty())
     {
-        std::cerr << "Error: Failed to send ACK." << std::endl;
-        return;
+        std::cerr << " with options: " << options;
     }
-
-    // Výpis odeslané ACK zprávy do stderr
-    std::cerr << "ACK " << hostname << ":" << port << " " << blockID << std::endl;
+    std::cerr << std::endl;
 }
 
-bool receiveAck(int sock, uint16_t expectedBlockID)
+// Function to receive ACK (Acknowledgment) packet and capture the server's port
+bool receiveAck(int sock, uint16_t &receivedBlockID, int &serverPort)
 {
-
-    if (!waitForAckWithTimeout(sock, 3)) // Wait for 3 seconds
-    {
-        std::cerr << "Timeout waiting for ACK." << std::endl;
-        return false;
-    }
-
+    // Create a buffer to receive the ACK packet
     uint8_t ackBuffer[4];
-    sockaddr_in serverAddr;
-    socklen_t serverAddrLen = sizeof(serverAddr);
 
-    ssize_t receivedBytes = recvfrom(sock, ackBuffer, sizeof(ackBuffer), 0, (struct sockaddr *)&serverAddr, &serverAddrLen);
+    // Create sockaddr_in structure to store the sender's address
+    sockaddr_in senderAddr;
+    socklen_t senderAddrLen = sizeof(senderAddr);
+
+    // Receive the ACK packet and capture the sender's address
+    ssize_t receivedBytes = recvfrom(sock, ackBuffer, sizeof(ackBuffer), 0, (struct sockaddr *)&senderAddr, &senderAddrLen);
     if (receivedBytes == -1)
     {
         std::cerr << "Error: Failed to receive ACK." << std::endl;
         return false;
     }
 
-    if (ackBuffer[0] == 0 && ackBuffer[1] == 4)
+    // Check if the received packet is an ACK packet
+    if (receivedBytes != 4 || ackBuffer[0] != 0 || ackBuffer[1] != 4)
     {
-        uint16_t receivedBlockID = (ackBuffer[2] << 8) | ackBuffer[3];
-        if (receivedBlockID == expectedBlockID)
-        {
-            std::cerr << "Received ACK with right block ID: " << receivedBlockID << std::endl;
-            // No need to increment blockID here, as it should be incremented before sending the next DATA packet.
-            return true;
-        }
-        else
-        {
-            // Print the received block ID when it's unexpected.
-            std::cerr << "Error: Received ACK with unexpected block ID: received " << receivedBlockID << "  expected :" << expectedBlockID << std::endl;
-        }
-    }
-    else
-    {
-        std::cerr << "Error: Received unexpected packet (not ACK)." << std::endl;
+        std::cerr << "Error: Received packet is not an ACK." << std::endl;
+        return false;
     }
 
-    return false;
+    // Parse the received block ID from the ACK packet
+    receivedBlockID = (ackBuffer[2] << 8) | ackBuffer[3];
+
+    // Capture the server's port from the sender's address
+    serverPort = ntohs(senderAddr.sin_port);
+
+    std::cerr << "Received ACK with block ID: " << receivedBlockID << " from server port: " << serverPort << std::endl;
+
+    return true;
 }
 
 // Function to send DATA packet
 void sendData(int sock, const std::string &hostname, int port, const std::string &data)
 {
-    // Increment the block ID before sending each DATA packet
+    // Increment the block ID for the next data block
     blockID++;
 
-    // Create DATA packet
-    uint8_t dataBuffer[4 + data.length()];
-    dataBuffer[0] = 0;                     // High byte of opcode (0 for DATA)
-    dataBuffer[1] = 3;                     // Low byte of opcode (3 for DATA)
-    dataBuffer[2] = (blockID >> 8) & 0xFF; // High byte of block ID
-    dataBuffer[3] = blockID & 0xFF;        // Low byte of block ID
+    // Create a buffer for the DATA packet
+    std::vector<uint8_t> dataBuffer;
+    dataBuffer.push_back(0);                     // High byte of opcode (0 for DATA)
+    dataBuffer.push_back(3);                     // Low byte of opcode (3 for DATA)
+    dataBuffer.push_back((blockID >> 8) & 0xFF); // High byte of block ID
+    dataBuffer.push_back(blockID & 0xFF);        // Low byte of block ID
+    dataBuffer.insert(dataBuffer.end(), data.begin(), data.end());
 
-    // Copy data into the buffer
-    std::memcpy(dataBuffer + 4, data.c_str(), data.length());
-
-    // Create server address structure
+    // Create sockaddr_in structure for the remote server (serverAddr)
     sockaddr_in serverAddr;
     std::memset(&serverAddr, 0, sizeof(serverAddr));
     serverAddr.sin_family = AF_INET;
@@ -154,48 +111,46 @@ void sendData(int sock, const std::string &hostname, int port, const std::string
     inet_pton(AF_INET, hostname.c_str(), &(serverAddr.sin_addr));
 
     // Send DATA packet
-    ssize_t sentBytes = sendto(sock, dataBuffer, sizeof(dataBuffer), 0, (struct sockaddr *)&serverAddr, sizeof(serverAddr));
+    ssize_t sentBytes = sendto(sock, dataBuffer.data(), dataBuffer.size(), 0, (struct sockaddr *)&serverAddr, sizeof(serverAddr));
     if (sentBytes == -1)
     {
         std::cerr << "Error: Failed to send DATA." << std::endl;
-        return;
     }
 
-    std::cerr << "DATA " << hostname << ":" << port << " " << blockID << std::endl;
+    std::cerr << "Sent DATA packet with block ID: " << blockID << std::endl; // Print the opcode
 
-    // Increment the block ID for the next data block
+    // If you want to print the actual data being sent, you can do so here
+    std::cerr << "DATA Content: " << std::string(dataBuffer.begin() + 4, dataBuffer.end()) << std::endl;
 }
 
-// Funkce pro zpracování chybové zprávy
+// Function to handle errors
 void handleError(int sock, const std::string &hostname, int srcPort, int dstPort, uint16_t errorCode, const std::string &errorMsg)
 {
-    // Vytvoření ERROR zprávy
-    uint8_t errorBuffer[4 + errorMsg.length() + 1]; // +1 pro nulový byte ukončení řetězce
+    // Create an ERROR packet
+    uint8_t errorBuffer[4 + errorMsg.length() + 1]; // +1 for null-terminated string
     errorBuffer[0] = 0;                             // High byte of opcode (0 for ERROR)
     errorBuffer[1] = 5;                             // Low byte of opcode (5 for ERROR)
     errorBuffer[2] = (errorCode >> 8) & 0xFF;       // High byte of error code
     errorBuffer[3] = errorCode & 0xFF;              // Low byte of error code
 
-    // Přidání chybového textu do bufferu
+    // Add the error message to the buffer
     std::memcpy(errorBuffer + 4, errorMsg.c_str(), errorMsg.length());
-    errorBuffer[4 + errorMsg.length()] = '\0'; // Nulový byte ukončení řetězce
+    errorBuffer[4 + errorMsg.length()] = '\0'; // Null-terminated string
 
-    // Vytvoření sockaddr_in struktury pro vzdálený server (serverAddr)
+    // Create sockaddr_in structure for the remote server (serverAddr)
     sockaddr_in serverAddr;
     std::memset(&serverAddr, 0, sizeof(serverAddr));
     serverAddr.sin_family = AF_INET;
     serverAddr.sin_port = htons(dstPort);
     inet_pton(AF_INET, hostname.c_str(), &(serverAddr.sin_addr));
 
-    // Odeslání ERROR zprávy
+    // Send ERROR packet
     ssize_t sentBytes = sendto(sock, errorBuffer, sizeof(errorBuffer), 0, (struct sockaddr *)&serverAddr, sizeof(serverAddr));
     if (sentBytes == -1)
     {
         std::cerr << "Error: Failed to send ERROR." << std::endl;
-        return;
     }
 
-    // Výpis odeslané ERROR zprávy do stderr
     std::cerr << "ERROR " << hostname << ":" << srcPort << ":" << dstPort << " " << errorCode << " \"" << errorMsg << "\"" << std::endl;
 }
 
@@ -203,7 +158,7 @@ int main(int argc, char *argv[])
 {
     if (argc < 6)
     {
-        std::cerr << "Usage: tftp-client -h hostname [-p port] [-f filepath] -t dest_filepath" << std::endl;
+        std::cerr << "Usage: tftp-client -h hostname [-p port] -f filepath -t dest_filepath [-o options]" << std::endl;
         return 1;
     }
 
@@ -212,8 +167,9 @@ int main(int argc, char *argv[])
     std::string filepath;
     std::string destFilePath;
     std::string mode = "netascii"; // Default mode is "netascii"
+    std::string options;           // Optional parameters for OACK
 
-    // Zpracování příkazového řádku
+    // Process command-line arguments, including optional parameters
     for (int i = 1; i < argc; ++i)
     {
         std::string arg = argv[i];
@@ -235,45 +191,35 @@ int main(int argc, char *argv[])
         }
         else if (arg == "-m" && i + 1 < argc)
         {
-            mode = argv[++i]; // Nastavit mód na základě poskytnutého argumentu
+            mode = argv[++i]; // Set mode based on the provided argument
         }
-    }
-
-    // Otevření souboru pro čtení
-    std::ifstream file;
-
-    if (filepath == "-")
-    {
-        // Use standard input (stdin)
-        file.copyfmt(std::cin);
-        file.clear();
-        file.basic_ios<char>::rdbuf(std::cin.rdbuf());
-    }
-    else
-    {
-        file.open(filepath, std::ios::binary);
-        if (!file)
+        else if (arg == "-o" && i + 1 < argc)
         {
-            std::cerr << "Error: Failed to open file for reading." << std::endl;
-            return 1;
+            options = argv[++i]; // Set optional parameters based on the provided argument
         }
     }
 
-    // Otevření socketu pro komunikaci s vzdáleným serverem
+    // Create a UDP socket for communication
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock == -1)
     {
-        std::cerr << "Error: Unable to create socket." << std::endl;
+        std::cerr << "Error: Failed to create socket." << std::endl;
         return 1;
     }
 
-    // Implement the logic to send WRQ (Write Request)
-    sendRequestPacket(sock, hostname, port, destFilePath, mode, 2); // 2 means WRQ
+    // Set up the sockaddr_in structure for the server
+    sockaddr_in serverAddr;
+    std::memset(&serverAddr, 0, sizeof(serverAddr));
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(port);
+    inet_pton(AF_INET, hostname.c_str(), &(serverAddr.sin_addr));
 
-    // Wait for the server's acknowledgment after sending the WRQ
-    if (!receiveAck(sock, 0))
+    // Open the file for reading (similar to what you have)
+    std::ifstream file(filepath, std::ios::binary);
+    if (!file)
     {
-        std::cerr << "Error: Did not receive initial acknowledgment from server after sending WRQ." << std::endl;
+        std::cerr << "Error: Failed to open file for reading." << std::endl;
+        close(sock); // Close the socket on error
         return 1;
     }
 
@@ -282,45 +228,65 @@ int main(int argc, char *argv[])
 
     char buffer[maxDataSize]; // Buffer for reading data from the file
 
-    bool transfer_complete = false;
+    int serverPort = 0; // Variable to capture the server's port
 
-    while (!transfer_complete)
+    // Send WRQ packet with optional parameters (OACK)
+    sendWriteRequestWithOACK(sock, hostname, port, destFilePath, mode, options);
+
+    // Wait for an ACK or OACK response after WRQ and capture the server's port
+    if (!receiveAck(sock, blockID, serverPort))
+    {
+        std::cerr << "Error: Failed to receive ACK or OACK after WRQ." << std::endl;
+        handleError(sock, hostname, port, 0, 0, "Failed to receive ACK or OACK after WRQ");
+        close(sock);
+        return 1;
+    }
+
+    bool isOACK = (blockID == 0);
+
+    std::cerr << "Received " << (isOACK ? "OACK" : "ACK") << " after WRQ. Starting data transfer." << std::endl;
+    std::cerr << "Server provided port for data transfer: " << serverPort << std::endl; // Print the server's port
+
+    bool transferComplete = false;
+
+    while (!transferComplete)
     {
         file.read(buffer, maxDataSize);
         std::streamsize bytesRead = file.gcount();
 
-        if (bytesRead > 0 && bytesRead <= maxDataSize)
+        if (bytesRead > 0)
         {
             std::cerr << "Sending DATA packet with block ID: " << blockID + 1 << std::endl;
+            sendData(sock, hostname, serverPort, std::string(buffer, bytesRead)); // Send data to the server's port
+        }
+        else
+        {
+            // No more data to send
+            transferComplete = true;
+        }
 
-            sendData(sock, hostname, port, std::string(buffer, bytesRead));
-
-            if (!receiveAck(sock, blockID))
+        if (bytesRead > 0)
+        {
+            // Wait for the ACK after sending DATA
+            if (!isOACK && !receiveAck(sock, blockID, serverPort))
             {
                 std::cerr << "Error: Failed to receive ACK for block " << blockID << std::endl;
+                handleError(sock, hostname, serverPort, 0, 0, "Failed to receive ACK");
                 break;
             }
 
             if (bytesRead < maxDataSize) // If we read less than the max data size, we're done.
             {
-                transfer_complete = true;
+                transferComplete = true;
             }
-        }
-        else
-        {
-            if (bytesRead >= maxDataSize)
-            {
-                std::cerr << "Error: Data vetsi nez " << blockID << std::endl;
-            }
-            // No more data to send
-            transfer_complete = true;
         }
     }
 
+    // Close the file handle
+    file.close();
+
     // Close the socket
     close(sock);
-
-    std::cout << "File transfer completed." << std::endl;
 
     return 0;
 }
