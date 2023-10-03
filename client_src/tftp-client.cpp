@@ -68,6 +68,7 @@ bool receiveAck(int sock, uint16_t &receivedBlockID, int &serverPort)
     if (receivedBytes == -1)
     {
         std::cerr << "Error: Failed to receive ACK." << std::endl;
+
         return false;
     }
 
@@ -154,19 +155,39 @@ void handleError(int sock, const std::string &hostname, int srcPort, int dstPort
     std::cerr << "ERROR " << hostname << ":" << srcPort << ":" << dstPort << " " << errorCode << " \"" << errorMsg << "\"" << std::endl;
 }
 
-// Function to send a file to the server
-void sendFile(int sock, const std::string &hostname, int port, const std::string &localFilePath, const std::string &remoteFilePath, const std::string &mode, const std::string &options)
+// Function to send a file to the server or upload from stdin
+void transfer_file(int sock, const std::string &hostname, int port, const std::string &localFilePath, const std::string &remoteFilePath, const std::string &mode, const std::string &options)
 {
-    std::ifstream file(localFilePath, std::ios::binary);
+    std::istream *inputStream;
+    std::ifstream file;
+
+    if (localFilePath.empty())
+    {
+
+        std::string userInput;
+        std::cout << "Zadejte řádek textu: ";
+        std::getline(std::cin, userInput);
+
+        std::cout << "Zadali jste: " << userInput << std::endl;
+
+        file.open(userInput, std::ios::binary);
+    }
+    else
+    {
+        // Try to open the file for reading
+        file.open(localFilePath, std::ios::binary);
+    }
+
     if (!file)
     {
         std::cerr << "Error: Failed to open file for reading." << std::endl;
         close(sock); // Close the socket on error
         return;
     }
+    inputStream = &file;
 
     const size_t maxDataSize = 512; // Max data size in one DATA packet
-    char buffer[maxDataSize];       // Buffer for reading data from the file
+    char buffer[maxDataSize];       // Buffer for reading data from the file or stdin
 
     int serverPort = 0; // Variable to capture the server's port
 
@@ -191,8 +212,12 @@ void sendFile(int sock, const std::string &hostname, int port, const std::string
 
     while (!transferComplete)
     {
-        file.read(buffer, maxDataSize);
-        std::streamsize bytesRead = file.gcount();
+
+        std::cerr << "reading data *** " << std::endl; // Print the server's port
+
+        inputStream->read(buffer, maxDataSize);
+
+        std::streamsize bytesRead = inputStream->gcount();
 
         if (bytesRead > 0)
         {
@@ -222,8 +247,11 @@ void sendFile(int sock, const std::string &hostname, int port, const std::string
         }
     }
 
-    // Close the file handle
-    file.close();
+    // Close the file handle if opened
+    if (file.is_open())
+    {
+        file.close();
+    }
 
     // Close the socket
     close(sock);
@@ -231,12 +259,6 @@ void sendFile(int sock, const std::string &hostname, int port, const std::string
 
 int main(int argc, char *argv[])
 {
-    if (argc < 6)
-    {
-        std::cerr << "Usage: tftp-client -h hostname [-p port] -f filepath -t dest_filepath [-o options]" << std::endl;
-        return 1;
-    }
-
     std::string hostname;
     int port = 69; // Default port for TFTP
     std::string localFilePath;
@@ -266,12 +288,18 @@ int main(int argc, char *argv[])
         }
         else if (arg == "-m" && i + 1 < argc)
         {
-            mode = argv[++i]; // Set mode based on the provided argument
+            mode = argv[++i];
         }
         else if (arg == "-o" && i + 1 < argc)
         {
-            options = argv[++i]; // Set optional parameters based on the provided argument
+            options = argv[++i];
         }
+    }
+
+    if (hostname.empty() || remoteFilePath.empty())
+    {
+        std::cerr << "Usage: tftp-client -h hostname -f [filepath] -t dest_filepath [-p port] [-m mode] [-o options]" << std::endl;
+        return 1;
     }
 
     // Create a UDP socket for communication
@@ -289,8 +317,8 @@ int main(int argc, char *argv[])
     serverAddr.sin_port = htons(port);
     inet_pton(AF_INET, hostname.c_str(), &(serverAddr.sin_addr));
 
-    // Send the file to the server
-    sendFile(sock, hostname, port, localFilePath, remoteFilePath, mode, options);
+    // Send the file to the server or upload from stdin
+    transfer_file(sock, hostname, port, localFilePath, remoteFilePath, mode, options);
 
     return 0;
 }
