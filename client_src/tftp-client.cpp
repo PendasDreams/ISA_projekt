@@ -289,7 +289,6 @@ void sendReadRequest(int sock, const std::string &hostname, int port, const std:
     std::cerr << std::endl;
 }
 
-// Function to receive DATA packet
 bool receiveData(int sock, uint16_t &receivedBlockID, std::string &data)
 {
     // Create a buffer to receive the DATA packet
@@ -349,21 +348,23 @@ bool receiveData(int sock, uint16_t &receivedBlockID, std::string &data)
 // Modify the transfer_file function to receive a file from the server
 void receive_file(int sock, const std::string &hostname, int port, const std::string &localFilePath, const std::string &remoteFilePath, const std::string &mode, const std::string &options)
 {
-    std::ofstream outputFile(localFilePath, std::ios::binary); // Open a local file to write the received data
+    std::ofstream outputFile(localFilePath, std::ios::binary | std::ios::out); // Open a local file to write the received data
 
-    if (!outputFile)
+    if (!outputFile.is_open())
     {
         std::cerr << "Error: Failed to open file for writing." << std::endl;
         close(sock); // Close the socket on error
         return;
     }
 
-    uint16_t blockID = 0; // Initialize block ID to 0
+    std::cerr << "File opened" << std::endl;
 
     // Send an RRQ packet to request the file from the server
     sendReadRequest(sock, hostname, port, remoteFilePath, mode, options);
 
     bool transferComplete = false;
+
+    uint16_t blockID = 0; // Initialize the block ID
 
     while (!transferComplete)
     {
@@ -374,20 +375,31 @@ void receive_file(int sock, const std::string &hostname, int port, const std::st
         if (!receiveData(sock, receivedBlockID, data))
         {
             std::cerr << "Error: Failed to receive DATA." << std::endl;
-            handleError(sock, hostname, port, 0, 0, "Failed to receive DATA");
-            break;
+            close(sock);                   // Close the socket on error
+            outputFile.close();            // Close the output file
+            remove(localFilePath.c_str()); // Delete the partially downloaded file
+            return;
         }
 
         // Check if the received block ID is the expected one
         if (receivedBlockID != blockID + 1)
         {
             std::cerr << "Error: Received out-of-order block ID." << std::endl;
-            handleError(sock, hostname, port, 0, 0, "Received out-of-order block ID");
-            break;
+            close(sock);                   // Close the socket on error
+            outputFile.close();            // Close the output file
+            remove(localFilePath.c_str()); // Delete the partially downloaded file
+            return;
         }
 
         // Write the received data to the output file
-        outputFile.write(data.c_str(), data.size());
+        if (!outputFile.write(data.data(), data.size()))
+        {
+            std::cerr << "Error: Failed to write data to the file." << std::endl;
+            close(sock);                   // Close the socket on error
+            outputFile.close();            // Close the output file
+            remove(localFilePath.c_str()); // Delete the partially downloaded file
+            return;
+        }
 
         // Increment the block ID for the next ACK
         blockID = receivedBlockID;
@@ -404,6 +416,8 @@ void receive_file(int sock, const std::string &hostname, int port, const std::st
 
     // Close the socket
     close(sock);
+
+    std::cerr << "File download complete: " << localFilePath << std::endl;
 }
 
 int main(int argc, char *argv[])
