@@ -7,6 +7,8 @@
 #include <ctime>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <chrono>
+#include <thread>
 
 // Define the initial block ID
 uint16_t blockID = 0;
@@ -244,6 +246,13 @@ void SendFile(int sock, const std::string &hostname, int port, const std::string
         file.close();
     }
 
+    std::cout << "Waiting for 1 second..." << std::endl;
+
+    // Sleep for 1 second (1000 milliseconds)
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+
+    std::cout << "Done!" << std::endl;
+
     // Close the socket
     close(sock);
 }
@@ -413,6 +422,13 @@ void receive_file(int sock, const std::string &hostname, int port, const std::st
 
     // Close the output file
     outputFile.close();
+
+    std::cout << "Waiting for 1 second..." << std::endl;
+
+    // Sleep for 1 second (1000 milliseconds)
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+
+    std::cout << "Done!" << std::endl;
 
     // Close the socket
     close(sock);
