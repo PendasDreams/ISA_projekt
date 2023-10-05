@@ -110,3 +110,11 @@ bool isAscii(const std::string &filePath);
  * @return Režim komunikace.
  */
 std::string determineMode(const std::string &filePath);
+
+enum class RequestType
+{
+    READ,
+    WRITE
+};
+
+void SendRequest(int sock, const std::string &hostname, int port, const std::string &remoteFilePath, const std::string &mode, const std::string &options, RequestType requestType);
