@@ -436,14 +436,50 @@ void receive_file(int sock, const std::string &hostname, int port, const std::st
     std::cerr << "File download complete: " << localFilePath << std::endl;
 }
 
+bool isAscii(const std::string &filePath)
+{
+    std::ifstream file(filePath, std::ios::binary);
+
+    if (!file)
+    {
+        std::cerr << "Failed to open file for reading." << std::endl;
+        return false;
+    }
+
+    char buffer;
+    while (file.get(buffer))
+    {
+        if (buffer == '\0')
+        {
+            // První nula by mohla indikovat binární data
+            file.close();
+            return false; // Pravděpodobně binární data
+        }
+    }
+
+    file.close();
+    return true; // Pravděpodobně ASCII data
+}
+
+std::string determineMode(const std::string &filePath)
+{
+    if (isAscii(filePath))
+    {
+        return "netascii"; // Pokud jsou to ASCII data, použijte "netascii" režim
+    }
+    else
+    {
+        return "octet"; // Pokud jsou to binární data, použijte "octet" režim
+    }
+}
+
 int main(int argc, char *argv[])
 {
     std::string hostname;
     int port = 69; // Default port for TFTP
     std::string localFilePath;
     std::string remoteFilePath;
-    std::string mode = "netascii"; // Default mode is "netascii"
-    std::string options;           // Optional parameters for OACK
+    std::string options; // Optional parameters for OACK
 
     // Process command-line arguments, including optional parameters
     for (int i = 1; i < argc; ++i)
@@ -465,10 +501,6 @@ int main(int argc, char *argv[])
         {
             remoteFilePath = argv[++i];
         }
-        else if (arg == "-m" && i + 1 < argc)
-        {
-            mode = argv[++i];
-        }
         else if (arg == "-o" && i + 1 < argc)
         {
             options = argv[++i];
@@ -477,9 +509,12 @@ int main(int argc, char *argv[])
 
     if (hostname.empty() || remoteFilePath.empty())
     {
-        std::cerr << "Usage: tftp-client -h hostname -f [filepath] -t dest_filepath [-p port] [-m mode] [-o options]" << std::endl;
+        std::cerr << "Usage: tftp-client -h hostname -f [filepath] -t dest_filepath [-p port]" << std::endl;
         return 1;
     }
+
+    // Determine the mode based on the file content
+    std::string mode = determineMode(localFilePath);
 
     // Create a UDP socket for communication
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
