@@ -1,6 +1,7 @@
 #include "tftp-client.h"
 #include <iostream>
 #include <string>
+#include <vector>
 #include <fstream>
 #include <cstring>
 #include <cstdlib>
@@ -9,7 +10,6 @@
 #include <unistd.h>
 #include <chrono>
 #include <thread>
-#include <vector>
 
 // Define the initial block ID
 uint16_t blockID = 0;
