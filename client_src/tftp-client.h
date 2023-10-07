@@ -1,7 +1,16 @@
 #pragma once
 
+#include <iostream>
 #include <string>
 #include <vector>
+#include <fstream>
+#include <cstring>
+#include <cstdlib>
+#include <ctime>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <chrono>
+#include <thread>
 
 enum class RequestType
 {
