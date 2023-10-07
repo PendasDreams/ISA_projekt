@@ -11,50 +11,93 @@
 #include <chrono>
 #include <thread>
 
-// Define the initial block ID
-uint16_t blockID = 0;
-
-// Function to send WRQ (Write Request) packet with optional parameters (OACK)
-void sendWriteRequestWithOACK(int sock, const std::string &hostname, int port, const std::string &filepath, const std::string &mode, const std::string &options)
+// Function to handle errors
+void handleError(int sock, const std::string &hostname, int srcPort, int dstPort, uint16_t errorCode, const std::string &errorMsg)
 {
-    // Create a buffer for the write request packet
+    // Create an ERROR packet
+    uint8_t errorBuffer[4 + errorMsg.length() + 1]; // +1 for null-terminated string
+    errorBuffer[0] = 0;                             // High byte of opcode (0 for ERROR)
+    errorBuffer[1] = 5;                             // Low byte of opcode (5 for ERROR)
+    errorBuffer[2] = (errorCode >> 8) & 0xFF;       // High byte of error code
+    errorBuffer[3] = errorCode & 0xFF;              // Low byte of error code
+
+    // Add the error message to the buffer
+    std::memcpy(errorBuffer + 4, errorMsg.c_str(), errorMsg.length());
+    errorBuffer[4 + errorMsg.length()] = '\0'; // Null-terminated string
+
+    // Create sockaddr_in structure for the remote server (serverAddr)
+    sockaddr_in serverAddr;
+    std::memset(&serverAddr, 0, sizeof(serverAddr));
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(dstPort);
+    inet_pton(AF_INET, hostname.c_str(), &(serverAddr.sin_addr));
+
+    // Send ERROR packet
+    ssize_t sentBytes = sendto(sock, errorBuffer, sizeof(errorBuffer), 0, (struct sockaddr *)&serverAddr, sizeof(serverAddr));
+    if (sentBytes == -1)
+    {
+        std::cerr << "Error: Failed to send ERROR." << std::endl;
+    }
+
+    std::cerr << "ERROR " << hostname << ":" << srcPort << ":" << dstPort << " " << errorCode << " \"" << errorMsg << "\"" << std::endl;
+}
+
+void sendRequest(int sock, const std::string &hostname, int port, const std::string &filepath, const std::string &mode, const std::string &options, RequestType requestType)
+{
+    // Create a buffer for the request packet
     std::vector<uint8_t> requestBuffer;
-    requestBuffer.push_back(0); // High byte of opcode (0 for WRQ)
-    requestBuffer.push_back(2); // Low byte of opcode (2 for WRQ)
+    requestBuffer.push_back(0); // High byte of opcode always 0 for RRQ and WRQ
+
+    // Determine the type of request
+    if (requestType == RequestType::WRITE)
+    {
+        requestBuffer.push_back(2); // Low byte of opcode (2 for WRQ)
+    }
+    else
+    {
+        requestBuffer.push_back(1); // Low byte of opcode (1 for RRQ)
+    }
+
     requestBuffer.insert(requestBuffer.end(), filepath.begin(), filepath.end());
     requestBuffer.push_back(0); // Null-terminate the filepath
     requestBuffer.insert(requestBuffer.end(), mode.begin(), mode.end());
     requestBuffer.push_back(0); // Null-terminate the mode
 
-    // Append optional parameters (OACK) if provided
+    // Append optional parameters if provided
     if (!options.empty())
     {
         requestBuffer.insert(requestBuffer.end(), options.begin(), options.end());
         requestBuffer.push_back(0); // Null-terminate the options
     }
 
-    // Create a sockaddr_in structure for the remote server
+    // Create sockaddr_in structure for the remote server
     sockaddr_in serverAddr;
     std::memset(&serverAddr, 0, sizeof(serverAddr));
     serverAddr.sin_family = AF_INET;
     serverAddr.sin_port = htons(port);
     inet_pton(AF_INET, hostname.c_str(), &(serverAddr.sin_addr));
 
-    // Send the write request packet
+    // Send the request packet
     ssize_t sentBytes = sendto(sock, requestBuffer.data(), requestBuffer.size(), 0, (struct sockaddr *)&serverAddr, sizeof(serverAddr));
     if (sentBytes == -1)
     {
-        std::cerr << "Error: Failed to send WRQ packet." << std::endl;
+        std::cerr << "Error: Failed to send ";
+        std::cerr << (requestType == RequestType::WRITE ? "WRQ" : "RRQ");
+        std::cerr << " packet." << std::endl;
         return;
     }
 
-    std::cerr << "Write Request " << hostname << ":" << port << " \"" << filepath << "\" " << mode;
+    std::cerr << (requestType == RequestType::WRITE ? "Write" : "Read");
+    std::cerr << " Request " << hostname << ":" << port << " \"" << filepath << "\" " << mode;
     if (!options.empty())
     {
         std::cerr << " with options: " << options;
     }
     std::cerr << std::endl;
 }
+
+// Define the initial block ID
+uint16_t blockID = 0;
 
 // Function to receive ACK (Acknowledgment) packet and capture the server's port
 bool receiveAck(int sock, uint16_t &receivedBlockID, int &serverPort)
@@ -127,37 +170,6 @@ void sendData(int sock, const std::string &hostname, int port, const std::string
     std::cerr << "DATA Content: " << std::string(dataBuffer.begin() + 4, dataBuffer.end()) << std::endl;
 }
 
-// Function to handle errors
-void handleError(int sock, const std::string &hostname, int srcPort, int dstPort, uint16_t errorCode, const std::string &errorMsg)
-{
-    // Create an ERROR packet
-    uint8_t errorBuffer[4 + errorMsg.length() + 1]; // +1 for null-terminated string
-    errorBuffer[0] = 0;                             // High byte of opcode (0 for ERROR)
-    errorBuffer[1] = 5;                             // Low byte of opcode (5 for ERROR)
-    errorBuffer[2] = (errorCode >> 8) & 0xFF;       // High byte of error code
-    errorBuffer[3] = errorCode & 0xFF;              // Low byte of error code
-
-    // Add the error message to the buffer
-    std::memcpy(errorBuffer + 4, errorMsg.c_str(), errorMsg.length());
-    errorBuffer[4 + errorMsg.length()] = '\0'; // Null-terminated string
-
-    // Create sockaddr_in structure for the remote server (serverAddr)
-    sockaddr_in serverAddr;
-    std::memset(&serverAddr, 0, sizeof(serverAddr));
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(dstPort);
-    inet_pton(AF_INET, hostname.c_str(), &(serverAddr.sin_addr));
-
-    // Send ERROR packet
-    ssize_t sentBytes = sendto(sock, errorBuffer, sizeof(errorBuffer), 0, (struct sockaddr *)&serverAddr, sizeof(serverAddr));
-    if (sentBytes == -1)
-    {
-        std::cerr << "Error: Failed to send ERROR." << std::endl;
-    }
-
-    std::cerr << "ERROR " << hostname << ":" << srcPort << ":" << dstPort << " " << errorCode << " \"" << errorMsg << "\"" << std::endl;
-}
-
 // Function to send a file to the server or upload from stdin
 void SendFile(int sock, const std::string &hostname, int port, const std::string &localFilePath, const std::string &remoteFilePath, const std::string &mode, const std::string &options)
 {
@@ -186,7 +198,7 @@ void SendFile(int sock, const std::string &hostname, int port, const std::string
     int serverPort = 0; // Variable to capture the server's port
 
     // Send WRQ packet with optional parameters (OACK)
-    sendWriteRequestWithOACK(sock, hostname, port, remoteFilePath, mode, options);
+    sendRequest(sock, hostname, port, remoteFilePath, mode, options, RequestType::WRITE);
 
     // Wait for an ACK or OACK response after WRQ and capture the server's port
     if (!receiveAck(sock, blockID, serverPort))
@@ -256,47 +268,6 @@ void SendFile(int sock, const std::string &hostname, int port, const std::string
 
     // Close the socket
     close(sock);
-}
-
-// Function to send RRQ (Read Request) packet
-void sendReadRequest(int sock, const std::string &hostname, int port, const std::string &remoteFilePath, const std::string &mode, const std::string &options)
-{
-    // Create an RRQ packet (opcode 1)
-    std::vector<uint8_t> requestBuffer;
-    requestBuffer.push_back(0); // High byte of opcode (0 for RRQ)
-    requestBuffer.push_back(1); // Low byte of opcode (1 for RRQ)
-    requestBuffer.insert(requestBuffer.end(), remoteFilePath.begin(), remoteFilePath.end());
-    requestBuffer.push_back(0); // Null-terminate the filepath
-    requestBuffer.insert(requestBuffer.end(), mode.begin(), mode.end());
-    requestBuffer.push_back(0); // Null-terminate the mode
-
-    // Append optional parameters if provided
-    if (!options.empty())
-    {
-        requestBuffer.insert(requestBuffer.end(), options.begin(), options.end());
-        requestBuffer.push_back(0); // Null-terminate the options
-    }
-
-    // Create sockaddr_in structure for the remote server
-    sockaddr_in serverAddr;
-    std::memset(&serverAddr, 0, sizeof(serverAddr));
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(port);
-    inet_pton(AF_INET, hostname.c_str(), &(serverAddr.sin_addr));
-
-    // Send the RRQ packet
-    ssize_t sentBytes = sendto(sock, requestBuffer.data(), requestBuffer.size(), 0, (struct sockaddr *)&serverAddr, sizeof(serverAddr));
-    if (sentBytes == -1)
-    {
-        std::cerr << "Error: Failed to send RRQ packet." << std::endl;
-    }
-
-    std::cerr << "Read Request " << hostname << ":" << port << " \"" << remoteFilePath << "\" " << mode;
-    if (!options.empty())
-    {
-        std::cerr << " with options: " << options;
-    }
-    std::cerr << std::endl;
 }
 
 bool receiveData(int sock, uint16_t &receivedBlockID, std::string &data)
@@ -370,7 +341,7 @@ void receive_file(int sock, const std::string &hostname, int port, const std::st
     std::cerr << "File opened" << std::endl;
 
     // Send an RRQ packet to request the file from the server
-    sendReadRequest(sock, hostname, port, remoteFilePath, mode, options);
+    sendRequest(sock, hostname, port, remoteFilePath, mode, options, RequestType::READ);
 
     bool transferComplete = false;
 

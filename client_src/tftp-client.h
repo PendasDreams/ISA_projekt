@@ -3,6 +3,12 @@
 #include <string>
 #include <vector>
 
+enum class RequestType
+{
+    READ,
+    WRITE
+};
+
 /**
  * @brief Odešle WRQ (Write Request) packet s volitelnými parametry (OACK).
  *
@@ -111,10 +117,4 @@ bool isAscii(const std::string &filePath);
  */
 std::string determineMode(const std::string &filePath);
 
-enum class RequestType
-{
-    READ,
-    WRITE
-};
-
-void SendRequest(int sock, const std::string &hostname, int port, const std::string &remoteFilePath, const std::string &mode, const std::string &options, RequestType requestType);
+void sendRequest(int sock, const std::string &hostname, int port, const std::string &filepath, const std::string &mode, const std::string &options, RequestType requestType);
