@@ -121,7 +121,7 @@ void sendData(int sock, const std::string &hostname, int port, const std::string
     std::cerr << "Sent DATA packet with block ID: " << blockID << std::endl; // Print the opcode
 
     // If you want to print the actual data being sent, you can do so here
-    std::cerr << "DATA Content: " << std::string(dataBuffer.begin() + 4, dataBuffer.end()) << std::endl;
+    // std::cerr << "DATA Content: " << std::string(dataBuffer.begin() + 4, dataBuffer.end()) << std::endl;
 }
 
 // Function to handle errors
@@ -204,7 +204,7 @@ void SendFile(int sock, const std::string &hostname, int port, const std::string
     while (!transferComplete)
     {
 
-        std::cerr << "reading data *** " << std::endl; // Print the server's port
+        // std::cerr << "reading data *** " << std::endl; // Print the server's port
 
         inputStream->read(buffer, maxDataSize);
 
@@ -212,7 +212,7 @@ void SendFile(int sock, const std::string &hostname, int port, const std::string
 
         if (bytesRead > 0)
         {
-            std::cerr << "Sending DATA packet with block ID: " << blockID + 1 << std::endl;
+            // std::cerr << "Sending DATA packet with block ID: " << blockID + 1 << std::endl;
             sendData(sock, hostname, serverPort, std::string(buffer, bytesRead)); // Send data to the server's port
         }
         else

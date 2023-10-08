@@ -11,24 +11,12 @@
 #include <unistd.h>
 #include <chrono>
 #include <thread>
-
+#include <sstream>
 enum class RequestType
 {
     READ,
     WRITE
 };
-
-/**
- * @brief Odešle WRQ (Write Request) packet s volitelnými parametry (OACK).
- *
- * @param sock Socket pro komunikaci.
- * @param hostname Adresa hostitele.
- * @param port Port pro TFTP komunikaci.
- * @param filepath Cílová cesta na vzdáleném serveru.
- * @param mode Režim komunikace (např. "netascii" nebo "octet").
- * @param options Volitelné parametry (OACK).
- */
-void sendWriteRequestWithOACK(int sock, const std::string &hostname, int port, const std::string &filepath, const std::string &mode, const std::string &options);
 
 /**
  * @brief Přijme ACK (Acknowledgment) packet a získá informace o serverovém portu.
@@ -74,18 +62,6 @@ void handleError(int sock, const std::string &hostname, int srcPort, int dstPort
  * @param options Volitelné parametry (OACK).
  */
 void SendFile(int sock, const std::string &hostname, int port, const std::string &localFilePath, const std::string &remoteFilePath, const std::string &mode, const std::string &options);
-
-/**
- * @brief Odešle RRQ (Read Request) packet.
- *
- * @param sock Socket pro komunikaci.
- * @param hostname Adresa hostitele.
- * @param port Port pro TFTP komunikaci.
- * @param remoteFilePath Cílová cesta na vzdáleném serveru.
- * @param mode Režim komunikace (např. "netascii" nebo "octet").
- * @param options Volitelné parametry (OACK).
- */
-void sendReadRequest(int sock, const std::string &hostname, int port, const std::string &remoteFilePath, const std::string &mode, const std::string &options);
 
 /**
  * @brief Přijme DATA packet.
