@@ -12,7 +12,8 @@ struct TFTPOparams
 };
 
 // Function to send WRQ (Write Request) packet with optional parameters (OACK)
-void sendWriteRequestWithOACK(int sock, const std::string &hostname, int port, const std::string &filepath, const std::string &mode, const std::string &options)
+// Function to send WRQ (Write Request) packet with optional parameters (OACK)
+void sendWriteRequestWithOACK(int sock, const std::string &hostname, int port, const std::string &filepath, const std::string &mode, const std::string &options, const TFTPOparams &params)
 {
     // Create a buffer for the write request packet
     std::vector<uint8_t> requestBuffer;
@@ -23,11 +24,12 @@ void sendWriteRequestWithOACK(int sock, const std::string &hostname, int port, c
     requestBuffer.insert(requestBuffer.end(), mode.begin(), mode.end());
     requestBuffer.push_back(0); // Null-terminate the mode
 
-    // Append optional parameters (OACK) if provided
-    if (!options.empty())
+    // Append the blocksize option from params
+    if (params.blksize > 0)
     {
-        requestBuffer.insert(requestBuffer.end(), options.begin(), options.end());
-        requestBuffer.push_back(0); // Null-terminate the options
+        std::string blocksizeOption = "blksize=" + std::to_string(params.blksize);
+        requestBuffer.insert(requestBuffer.end(), blocksizeOption.begin(), blocksizeOption.end());
+        requestBuffer.push_back(0); // Null-terminate the blocksize option
     }
 
     // Create a sockaddr_in structure for the remote server
@@ -50,12 +52,13 @@ void sendWriteRequestWithOACK(int sock, const std::string &hostname, int port, c
     {
         std::cerr << " with options: " << options;
     }
-    std::cerr << std::endl;
+    std::cerr << " using block size: " << params.blksize << std::endl;
 }
 
 // Function to receive ACK (Acknowledgment) packet and capture the server's port
 bool receiveAck(int sock, uint16_t &receivedBlockID, int &serverPort)
 {
+
     // Create a buffer to receive the ACK packet
     uint8_t ackBuffer[4];
 
@@ -121,7 +124,7 @@ void sendData(int sock, const std::string &hostname, int port, const std::string
     std::cerr << "Sent DATA packet with block ID: " << blockID << std::endl; // Print the opcode
 
     // If you want to print the actual data being sent, you can do so here
-    std::cerr << "DATA Content: " << std::string(dataBuffer.begin() + 4, dataBuffer.end()) << std::endl;
+    // std::cerr << "DATA Content: " << std::string(dataBuffer.begin() + 4, dataBuffer.end()) << std::endl;
 }
 
 // Function to handle errors
@@ -156,7 +159,7 @@ void handleError(int sock, const std::string &hostname, int srcPort, int dstPort
 }
 
 // Function to send a file to the server or upload from stdin
-void SendFile(int sock, const std::string &hostname, int port, const std::string &localFilePath, const std::string &remoteFilePath, const std::string &mode, const std::string &options)
+void SendFile(int sock, const std::string &hostname, int port, const std::string &localFilePath, const std::string &remoteFilePath, const std::string &mode, const std::string &options, const TFTPOparams &params)
 {
     std::istream *inputStream;
     std::ifstream file;
@@ -183,7 +186,7 @@ void SendFile(int sock, const std::string &hostname, int port, const std::string
     int serverPort = 0; // Variable to capture the server's port
 
     // Send WRQ packet with optional parameters (OACK)
-    sendWriteRequestWithOACK(sock, hostname, port, remoteFilePath, mode, options);
+    sendWriteRequestWithOACK(sock, hostname, port, remoteFilePath, mode, options, params);
 
     // Wait for an ACK or OACK response after WRQ and capture the server's port
     if (!receiveAck(sock, blockID, serverPort))
@@ -204,7 +207,7 @@ void SendFile(int sock, const std::string &hostname, int port, const std::string
     while (!transferComplete)
     {
 
-        std::cerr << "reading data *** " << std::endl; // Print the server's port
+        // std::cerr << "reading data *** " << std::endl; // Print the server's port
 
         inputStream->read(buffer, maxDataSize);
 
@@ -212,19 +215,11 @@ void SendFile(int sock, const std::string &hostname, int port, const std::string
 
         if (bytesRead > 0)
         {
-            std::cerr << "Sending DATA packet with block ID: " << blockID + 1 << std::endl;
+            // std::cerr << "Sending DATA packet with block ID: " << blockID + 1 << std::endl;
             sendData(sock, hostname, serverPort, std::string(buffer, bytesRead)); // Send data to the server's port
-        }
-        else
-        {
-            // No more data to send
-            transferComplete = true;
-        }
+                                                                                  // Wait for the ACK after sending DATA
 
-        if (bytesRead > 0)
-        {
-            // Wait for the ACK after sending DATA
-            if (!isOACK && !receiveAck(sock, blockID, serverPort))
+            if (!receiveAck(sock, blockID, serverPort) && !isOACK)
             {
                 std::cerr << "Error: Failed to receive ACK for block " << blockID << std::endl;
                 handleError(sock, hostname, serverPort, 0, 0, "Failed to receive ACK");
@@ -235,6 +230,11 @@ void SendFile(int sock, const std::string &hostname, int port, const std::string
             {
                 transferComplete = true;
             }
+        }
+        else
+        {
+            // No more data to send
+            transferComplete = true;
         }
     }
 
@@ -299,7 +299,7 @@ void sendReadRequest(int sock, const std::string &hostname, int port, const std:
 bool receiveData(int sock, uint16_t &receivedBlockID, std::string &data)
 {
     // Create a buffer to receive the DATA packet
-    std::vector<uint8_t> dataBuffer(516); // Max size of a DATA packet
+    std::vector<uint8_t> dataBuffer(1024); // Max size of a DATA packet
 
     // Create sockaddr_in structure to store the sender's address
     sockaddr_in senderAddr;
@@ -626,7 +626,7 @@ int main(int argc, char *argv[])
 
     if (localFilePath.empty())
     {
-        SendFile(sock, hostname, port, localFilePath, remoteFilePath, mode, options);
+        SendFile(sock, hostname, port, localFilePath, remoteFilePath, mode, options, Oparams);
     }
     else if (!localFilePath.empty() && !remoteFilePath.empty())
     {

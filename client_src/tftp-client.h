@@ -61,7 +61,7 @@ void handleError(int sock, const std::string &hostname, int srcPort, int dstPort
  * @param mode Režim komunikace (např. "netascii" nebo "octet").
  * @param options Volitelné parametry (OACK).
  */
-void SendFile(int sock, const std::string &hostname, int port, const std::string &localFilePath, const std::string &remoteFilePath, const std::string &mode, const std::string &options);
+// void SendFile(int sock, const std::string &hostname, int port, const std::string &localFilePath, const std::string &remoteFilePath, const std::string &mode, const std::string &options);
 
 /**
  * @brief Přijme DATA packet.
