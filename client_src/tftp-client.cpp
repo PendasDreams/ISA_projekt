@@ -12,7 +12,6 @@ struct TFTPOparams
 };
 
 // Function to send WRQ (Write Request) packet with optional parameters (OACK)
-// Function to send WRQ (Write Request) packet with optional parameters (OACK)
 void sendWriteRequestWithOACK(int sock, const std::string &hostname, int port, const std::string &filepath, const std::string &mode, const std::string &options, const TFTPOparams &params)
 {
     // Create a buffer for the write request packet
@@ -24,12 +23,18 @@ void sendWriteRequestWithOACK(int sock, const std::string &hostname, int port, c
     requestBuffer.insert(requestBuffer.end(), mode.begin(), mode.end());
     requestBuffer.push_back(0); // Null-terminate the mode
 
-    // Append the blocksize option from params
+    // Append the blocksize option from params if blksize > 0
     if (params.blksize > 0)
     {
-        std::string blocksizeOption = "blksize=" + std::to_string(params.blksize);
+        // Add "blksize" followed by a null terminator
+        std::string blocksizeOption = "blksize";
         requestBuffer.insert(requestBuffer.end(), blocksizeOption.begin(), blocksizeOption.end());
-        requestBuffer.push_back(0); // Null-terminate the blocksize option
+        requestBuffer.push_back(0); // Null-terminate "blksize"
+
+        // Add the value as a string followed by a null terminator
+        std::string blockSizeValue = std::to_string(params.blksize);
+        requestBuffer.insert(requestBuffer.end(), blockSizeValue.begin(), blockSizeValue.end());
+        requestBuffer.push_back(0); // Null-terminate the value
     }
 
     // Create a sockaddr_in structure for the remote server
@@ -47,48 +52,141 @@ void sendWriteRequestWithOACK(int sock, const std::string &hostname, int port, c
         return;
     }
 
-    std::cerr << "Write Request " << hostname << ":" << port << " \"" << filepath << "\" " << mode;
-    if (!options.empty())
+    // Convert the requestBuffer to a string for printing
+    std::string requestString(requestBuffer.begin(), requestBuffer.end());
+
+    // Print the request packet contents
+    std::cerr << "Sent Write Request packet with content:" << std::endl;
+    for (size_t i = 0; i < requestString.length(); i++)
     {
-        std::cerr << " with options: " << options;
+        std::cerr << "0x" << std::hex << static_cast<int>(requestString[i]) << " ";
     }
-    std::cerr << " using block size: " << params.blksize << std::endl;
+    std::cerr << std::endl;
 }
 
 // Function to receive ACK (Acknowledgment) packet and capture the server's port
-bool receiveAck(int sock, uint16_t &receivedBlockID, int &serverPort)
-{
 
-    // Create a buffer to receive the ACK packet
-    uint8_t ackBuffer[4];
+std::string hexStringToCharString(const std::string &hexStr)
+{
+    std::string charStr;
+    for (size_t i = 0; i < hexStr.length(); i += 2)
+    {
+        // Extract two characters from the hex string
+        std::string hexPair = hexStr.substr(i, 2);
+
+        // Convert the hex pair to an integer
+        int hexValue = std::stoi(hexPair, nullptr, 16);
+
+        // Convert the integer to a char and append it to the result
+        charStr += static_cast<char>(hexValue);
+    }
+    return charStr;
+}
+
+#include <iomanip> // for std::hex
+
+bool receiveAck(int sock, uint16_t &receivedBlockID, int &serverPort, const TFTPOparams &params, std::map<std::string, std::string> &receivedOptions)
+{
+    // Create a buffer to receive the ACK or OACK packet
+    uint8_t packetBuffer[516]; // Adjust the buffer size as needed for maximum possible packet size
 
     // Create sockaddr_in structure to store the sender's address
     sockaddr_in senderAddr;
     socklen_t senderAddrLen = sizeof(senderAddr);
 
-    // Receive the ACK packet and capture the sender's address
-    ssize_t receivedBytes = recvfrom(sock, ackBuffer, sizeof(ackBuffer), 0, (struct sockaddr *)&senderAddr, &senderAddrLen);
+    std::map<std::string, std::string> recieved_options;
+
+    // Receive the ACK or OACK packet and capture the sender's address
+    ssize_t receivedBytes = recvfrom(sock, packetBuffer, sizeof(packetBuffer), 0, (struct sockaddr *)&senderAddr, &senderAddrLen);
     if (receivedBytes == -1)
     {
-        std::cerr << "Error: Failed to receive ACK." << std::endl;
-
+        std::cerr << "Error: Failed to receive packet." << std::endl;
         return false;
     }
 
-    // Check if the received packet is an ACK packet
-    if (receivedBytes != 4 || ackBuffer[0] != 0 || ackBuffer[1] != 4)
+    // Check if the received packet is an ACK or OACK packet
+    if (receivedBytes < 4)
     {
-        std::cerr << "Error: Received packet is not an ACK." << std::endl;
+        std::cerr << "Error: Received packet is too short to be an ACK or OACK." << std::endl;
+        return false;
+    }
+
+    uint16_t opcode = (packetBuffer[0] << 8) | packetBuffer[1];
+    if (opcode != 4 && opcode != 6)
+    {
+        std::cerr << "Error: Received packet is not an ACK or OACK." << std::endl;
         return false;
     }
 
     // Parse the received block ID from the ACK packet
-    receivedBlockID = (ackBuffer[2] << 8) | ackBuffer[3];
+    receivedBlockID = (packetBuffer[2] << 8) | packetBuffer[3];
 
     // Capture the server's port from the sender's address
     serverPort = ntohs(senderAddr.sin_port);
 
-    std::cerr << "Received ACK with block ID: " << receivedBlockID << " from server port: " << serverPort << std::endl;
+    if (opcode == 6)
+    {
+        receivedBlockID = 0;
+        // This is an OACK packet, parse options
+        size_t pos = 1;
+
+        while (pos < receivedBytes)
+        {
+            std::string option;
+            std::string value;
+
+            std::cerr << "option read:" << std::endl;
+
+            // Read option until null terminator
+            while (pos < receivedBytes && packetBuffer[pos] != 0)
+            {
+                std::cerr << static_cast<char>(packetBuffer[pos]);
+                option += (packetBuffer[pos]);
+                pos++;
+            }
+
+            // Skip null terminator
+            pos++;
+
+            std::cerr << " " << std::endl;
+
+            std::cerr << "value read:" << std::endl;
+
+            // Read value until null terminator
+            while (pos < receivedBytes && packetBuffer[pos] != 0)
+            {
+                std::cerr << static_cast<char>(packetBuffer[pos]);
+                value += packetBuffer[pos];
+                pos++;
+            }
+            std::cerr << " " << std::endl;
+
+            // Skip null terminator
+            pos++;
+
+            option.erase(0, 1); // Erase the first character
+            option.push_back('\0');
+
+            std::cerr << "option: " << option << std::endl;
+            std::cerr << "value: " << value << std::endl;
+
+            // Store option and value in the receivedOptions map
+            recieved_options[option] = value;
+        }
+
+        for (const auto &pair : recieved_options)
+        {
+            if (pair.first == "blksize" && pair.second != std::to_string(params.blksize))
+            {
+                std::cerr << "Error: Received blksize option does not match the requested value" << pair.second << " and " << std::to_string(params.blksize) << std::endl;
+                return false;
+            }
+        }
+
+        // You can similarly check other options as needed
+    }
+
+    std::cerr << "Received " << (opcode == 4 ? "ACK" : "OACK") << " with block ID: " << receivedBlockID << " from server port: " << serverPort << std::endl;
 
     return true;
 }
@@ -174,22 +272,24 @@ void SendFile(int sock, const std::string &hostname, int port, const std::string
 
     if (!file)
     {
-        std::cerr << "Error: Failed to open file for reading." << std::endl;
+        std::cerr << "Error: Failed to open file for reading sendfile." << std::endl;
         close(sock); // Close the socket on error
         return;
     }
     inputStream = &file;
 
-    const size_t maxDataSize = 512; // Max data size in one DATA packet
-    char buffer[maxDataSize];       // Buffer for reading data from the file or stdin
+    const size_t maxDataSize = params.blksize; // Max data size in one DATA packet
+    char buffer[maxDataSize];                  // Buffer for reading data from the file or stdin
 
     int serverPort = 0; // Variable to capture the server's port
 
     // Send WRQ packet with optional parameters (OACK)
     sendWriteRequestWithOACK(sock, hostname, port, remoteFilePath, mode, options, params);
 
+    std::map<std::string, std::string> receivedOptions;
+
     // Wait for an ACK or OACK response after WRQ and capture the server's port
-    if (!receiveAck(sock, blockID, serverPort))
+    if (!receiveAck(sock, blockID, serverPort, params, receivedOptions))
     {
         std::cerr << "Error: Failed to receive ACK or OACK after WRQ." << std::endl;
         handleError(sock, hostname, port, 0, 0, "Failed to receive ACK or OACK after WRQ");
@@ -219,7 +319,7 @@ void SendFile(int sock, const std::string &hostname, int port, const std::string
             sendData(sock, hostname, serverPort, std::string(buffer, bytesRead)); // Send data to the server's port
                                                                                   // Wait for the ACK after sending DATA
 
-            if (!receiveAck(sock, blockID, serverPort) && !isOACK)
+            if (!receiveAck(sock, blockID, serverPort, params, receivedOptions) && !isOACK)
             {
                 std::cerr << "Error: Failed to receive ACK for block " << blockID << std::endl;
                 handleError(sock, hostname, serverPort, 0, 0, "Failed to receive ACK");
@@ -412,7 +512,7 @@ void receive_file(int sock, const std::string &hostname, int port, const std::st
         blockID = receivedBlockID;
 
         // If the received data block is less than the maximum size, it indicates the end of the transfer
-        if (data.size() < 512)
+        if (data.size() < 1024)
         {
             transferComplete = true;
         }
@@ -440,7 +540,7 @@ bool isAscii(const std::string &filePath)
 
     if (!file)
     {
-        std::cerr << "Failed to open file for reading." << std::endl;
+        std::cerr << "Failed to open file for reading asii." << std::endl;
         return false;
     }
 

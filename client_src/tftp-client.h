@@ -12,6 +12,7 @@
 #include <chrono>
 #include <thread>
 #include <sstream>
+#include <map>
 enum class RequestType
 {
     READ,
