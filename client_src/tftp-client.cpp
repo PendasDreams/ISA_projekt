@@ -342,7 +342,7 @@ bool setSocketTimeout(int sock, int timeout)
 }
 
 // Function to send a file to the server or upload from stdin
-void SendFile(int sock, const std::string &hostname, int port, const std::string &localFilePath, const std::string &remoteFilePath, const std::string &mode, const std::string &options, const TFTPOparams &params)
+void SendFile(int sock, const std::string &hostname, int port, const std::string &localFilePath, const std::string &remoteFilePath, std::string &mode, const std::string &options, const TFTPOparams &params)
 {
     std::istream *inputStream;
     std::ifstream file;
@@ -362,6 +362,9 @@ void SendFile(int sock, const std::string &hostname, int port, const std::string
         return;
     }
     inputStream = &file;
+
+    // Determine the mode based on the file content
+    mode = determineMode(userInput);
 
     const size_t maxDataSize = params.blksize; // Max data size in one DATA packet
     char buffer[maxDataSize];                  // Buffer for reading data from the file or stdin
@@ -832,16 +835,21 @@ bool isAscii(const std::string &fileName)
     // Porovnejte příponu s podporovanými režimy TFTP
     if (fileExtension == "txt" || fileExtension == "html" || fileExtension == "xml")
     {
+        std::cerr << "file is ascii " << fileName << std::endl;
+
         return true; // Textový režim ('netascii')
     }
     else
     {
+        std::cerr << "file is octet " << fileName << std::endl;
+
         return false; // Binární režim ('octet')
     }
 }
 
 std::string determineMode(const std::string &filePath)
 {
+
     if (isAscii(filePath))
     {
         return "netascii"; // Pokud jsou to ASCII data, použijte "netascii" režim
@@ -966,7 +974,7 @@ int main(int argc, char *argv[])
     }
 
     // Determine the mode based on the file content
-    std::string mode = determineMode(localFilePath);
+    std::string mode = "octet";
 
     // Create a UDP socket for communication
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
