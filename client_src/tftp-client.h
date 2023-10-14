@@ -15,6 +15,7 @@
 #include <map>
 #include <algorithm> // Pro převod názvu souboru na malá písmena
 #include <iomanip>   // for std::hex
+#include <fcntl.h>
 
 enum class RequestType
 {
