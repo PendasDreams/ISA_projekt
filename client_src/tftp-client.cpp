@@ -11,6 +11,8 @@ struct TFTPOparams
     uint16_t transfersize;
 };
 
+bool option_blksize_used = false;
+
 // Function to send WRQ (Write Request) packet with optional parameters (OACK)
 void sendWriteRequestWithOACK(int sock, const std::string &hostname, int port, const std::string &filepath, const std::string &mode, const std::string &options, const TFTPOparams &params)
 {
@@ -24,7 +26,7 @@ void sendWriteRequestWithOACK(int sock, const std::string &hostname, int port, c
     requestBuffer.push_back(0); // Null-terminate the mode
 
     // Append the blocksize option from params if blksize > 0
-    if (params.blksize > 0)
+    if (option_blksize_used == true)
     {
         // Add "blksize" followed by a null terminator
         std::string blocksizeOption = "blksize";
@@ -82,8 +84,6 @@ std::string hexStringToCharString(const std::string &hexStr)
     }
     return charStr;
 }
-
-#include <iomanip> // for std::hex
 
 bool receiveAck(int sock, uint16_t &receivedBlockID, int &serverPort, const TFTPOparams &params, std::map<std::string, std::string> &receivedOptions)
 {
@@ -165,20 +165,76 @@ bool receiveAck(int sock, uint16_t &receivedBlockID, int &serverPort, const TFTP
             pos++;
 
             option.erase(0, 1); // Erase the first character
-            option.push_back('\0');
 
             std::cerr << "option: " << option << std::endl;
-            std::cerr << "value: " << value << std::endl;
+            std::cerr << "value from server: " << value << std::endl;
+            std::cerr << "value from client: " << std::to_string(params.blksize) << std::endl;
 
             // Store option and value in the receivedOptions map
             recieved_options[option] = value;
+
+            std::string stringlenght = "blksize";
+            int size = stringlenght.size();
+
+            std::string stringlenght_recieved = option;
+            int size_recieved = stringlenght_recieved.size();
+
+            std::cerr << "sizeof blksize: " << size << std::endl;
+            std::cerr << "sizeof recieved blksize: " << size_recieved << std::endl;
         }
 
         for (const auto &pair : recieved_options)
         {
-            if (pair.first == "blksize" && pair.second != std::to_string(params.blksize))
+            // std::cerr << "Pair first: " << pair.first << std::endl;
+            // std::cerr << "Pair client first: "
+            //           << "blksize" << std::endl;
+
+            // std::cerr << "Pair secnd: " << pair.second << std::endl;
+            // std::cerr << "Pair client second: " << std::to_string(params.blksize) << std::endl;
+
+            // if (pair.first == "blksize")
+            // {
+            //     std::cerr << "blksize workie " << std::endl;
+
+            //     for (char c : pair.first)
+            //     {
+            //         // Convert the character to its hexadecimal representation
+            //         std::cout << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(c);
+            //     }
+            //     std::cerr << " " << std::endl;
+
+            //     for (char c : "blksize")
+            //     {
+            //         // Convert the character to its hexadecimal representation
+            //         std::cout << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(c);
+            //     }
+            //     std::cerr << " " << std::endl;
+            // }
+
+            // if (pair.second != std::to_string(params.blksize))
+            // {
+            //     std::cerr << "value do not workie " << std::endl;
+
+            //     for (char c : pair.second)
+            //     {
+            //         // Convert the character to its hexadecimal representation
+            //         std::cout << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(c);
+            //     }
+            //     std::cerr << " " << std::endl;
+
+            //     for (char c : std::to_string(params.blksize))
+            //     {
+            //         // Convert the character to its hexadecimal representation
+            //         std::cout << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(c);
+            //     }
+            //     std::cerr << " " << std::endl;
+            // }
+
+            if (pair.first == "blksize" && (pair.second != std::to_string(params.blksize)))
             {
-                std::cerr << "Error: Received blksize option does not match the requested value" << pair.second << " and " << std::to_string(params.blksize) << std::endl;
+                std::cerr << "Error: Received blksize option does not match the requested value: " << pair.second << " and " << std::to_string(params.blksize) << std::endl;
+                std::cerr << "Error: Requested value from server: " << pair.second << std::endl;
+                std::cerr << "Error: Requested value from client: " << std::to_string(params.blksize) << std::endl;
                 return false;
             }
         }
@@ -355,8 +411,38 @@ void SendFile(int sock, const std::string &hostname, int port, const std::string
     close(sock);
 }
 
+//****************************************************************************************************************************
+//
+//
+// Recieving file
+//
+//
+//****************************************************************************************************************************
+
+bool isBinaryFormat(const std::string &filename)
+{
+    // Získej koncovku souboru z názvu
+    size_t dotPosition = filename.find_last_of('.');
+    if (dotPosition == std::string::npos)
+    {
+        // Pokud nemáme koncovku, nelze určit formát, takže použijeme octet mode
+        return true;
+    }
+
+    std::string fileExtension = filename.substr(dotPosition + 1);
+
+    // Převeď koncovku na malá písmena pro jednodušší porovnání
+    std::transform(fileExtension.begin(), fileExtension.end(), fileExtension.begin(), ::tolower);
+
+    // Definuj seznam koncovek, které budeme považovat za binární formáty
+    std::vector<std::string> binaryExtensions = {"bin", "jpg", "png", "exe"};
+
+    // Porovnej koncovku s seznamem binárních koncovek
+    return std::find(binaryExtensions.begin(), binaryExtensions.end(), fileExtension) != binaryExtensions.end();
+}
+
 // Function to send RRQ (Read Request) packet
-void sendReadRequest(int sock, const std::string &hostname, int port, const std::string &remoteFilePath, const std::string &mode, const std::string &options)
+void sendReadRequest(int sock, const std::string &hostname, int port, const std::string &remoteFilePath, const std::string &mode, const std::string &options, const TFTPOparams &params)
 {
     // Create an RRQ packet (opcode 1)
     std::vector<uint8_t> requestBuffer;
@@ -367,11 +453,25 @@ void sendReadRequest(int sock, const std::string &hostname, int port, const std:
     requestBuffer.insert(requestBuffer.end(), mode.begin(), mode.end());
     requestBuffer.push_back(0); // Null-terminate the mode
 
-    // Append optional parameters if provided
-    if (!options.empty())
+    // // Append optional parameters if provided
+    // if (!options.empty())
+    // {
+    //     requestBuffer.insert(requestBuffer.end(), options.begin(), options.end());
+    //     requestBuffer.push_back(0); // Null-terminate the options
+    // }
+
+    // Append the blocksize option from params if blksize > 0
+    if (option_blksize_used == true)
     {
-        requestBuffer.insert(requestBuffer.end(), options.begin(), options.end());
-        requestBuffer.push_back(0); // Null-terminate the options
+        // Add "blksize" followed by a null terminator
+        std::string blocksizeOption = "blksize";
+        requestBuffer.insert(requestBuffer.end(), blocksizeOption.begin(), blocksizeOption.end());
+        requestBuffer.push_back(0); // Null-terminate "blksize"
+
+        // Add the value as a string followed by a null terminator
+        std::string blockSizeValue = std::to_string(params.blksize);
+        requestBuffer.insert(requestBuffer.end(), blockSizeValue.begin(), blockSizeValue.end());
+        requestBuffer.push_back(0); // Null-terminate the value
     }
 
     // Create sockaddr_in structure for the remote server
@@ -396,7 +496,47 @@ void sendReadRequest(int sock, const std::string &hostname, int port, const std:
     std::cerr << std::endl;
 }
 
-bool receiveData(int sock, uint16_t &receivedBlockID, std::string &data)
+bool receiveData(int sock, uint16_t &receivedBlockID, std::string &data, const TFTPOparams &params, const std::string &hostname)
+{
+    // Create a buffer to receive the DATA packet
+    std::vector<uint8_t> dataBuffer(params.blksize + 4); // Max size of a DATA packet with room for header
+
+    // Create sockaddr_in structure to store the sender's address
+    sockaddr_in senderAddr;
+    socklen_t senderAddrLen = sizeof(senderAddr);
+
+    std::cerr << "Before receiving " << std::endl;
+
+    // Receive the DATA packet and capture the sender's address
+    ssize_t receivedBytes = recvfrom(sock, dataBuffer.data(), dataBuffer.size(), 0, (struct sockaddr *)&senderAddr, &senderAddrLen);
+    if (receivedBytes == -1)
+    {
+        std::cerr << "Error: Failed to receive DATA." << std::endl;
+        return false;
+    }
+    std::cerr << "After receiving " << std::endl;
+
+    // Check if the received packet is a DATA packet
+    if (receivedBytes < 4 || dataBuffer[0] != 0 || dataBuffer[1] != 3)
+    {
+        std::cerr << "Error: Received packet is not a DATA packet." << std::endl;
+        return false;
+    }
+
+    // Parse the received block ID from the DATA packet
+    receivedBlockID = (dataBuffer[2] << 8) | dataBuffer[3];
+
+    // Extract the data from the packet (skip the first 4 bytes which are the header)
+    data.assign(dataBuffer.begin() + 4, dataBuffer.begin() + receivedBytes);
+
+    std::cerr << "Received DATA with block ID: " << receivedBlockID << std::endl;
+
+    blockID = receivedBlockID + 1;
+
+    return true;
+}
+
+bool receiveData_without_options(int sock, uint16_t &receivedBlockID, std::string &data, const TFTPOparams &params, const std::string &hostname)
 {
     // Create a buffer to receive the DATA packet
     std::vector<uint8_t> dataBuffer(1024); // Max size of a DATA packet
@@ -451,9 +591,43 @@ bool receiveData(int sock, uint16_t &receivedBlockID, std::string &data)
 
     return true;
 }
+bool sendAck(int sock, uint16_t blockID, const std::string &hostname, int serverPort, const TFTPOparams &params)
+{
+    // Create an ACK packet
+    std::vector<uint8_t> ackBuffer(4);
+    ackBuffer[0] = 0;                     // High byte of opcode (0 for ACK)
+    ackBuffer[1] = 4;                     // Low byte of opcode (4 for ACK)
+    ackBuffer[2] = (blockID >> 8) & 0xFF; // High byte of block ID
+    ackBuffer[3] = blockID & 0xFF;        // Low byte of block ID
+
+    // Create sockaddr_in structure for the remote server
+    sockaddr_in serverAddr;
+    std::memset(&serverAddr, 0, sizeof(serverAddr));
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(serverPort);
+
+    // Convert the hostname to an IP address and set it in serverAddr
+    if (inet_pton(AF_INET, hostname.c_str(), &(serverAddr.sin_addr)) <= 0)
+    {
+        std::cerr << "Error: Failed to convert hostname to IP address." << std::endl;
+        return false;
+    }
+
+    // Send the ACK packet to the server
+    ssize_t sentBytes = sendto(sock, ackBuffer.data(), ackBuffer.size(), 0, (struct sockaddr *)&serverAddr, sizeof(serverAddr));
+    if (sentBytes == -1)
+    {
+        std::cerr << "Error: Failed to send ACK." << std::endl;
+        return false;
+    }
+
+    std::cerr << "Sent ACK with block ID: " << blockID << " to server port: " << serverPort << std::endl;
+
+    return true;
+}
 
 // Modify the transfer_file function to receive a file from the server
-void receive_file(int sock, const std::string &hostname, int port, const std::string &localFilePath, const std::string &remoteFilePath, const std::string &mode, const std::string &options)
+void receive_file(int sock, const std::string &hostname, int port, const std::string &localFilePath, const std::string &remoteFilePath, const std::string &mode, const std::string &options, const TFTPOparams &params)
 {
     std::ofstream outputFile(localFilePath, std::ios::binary | std::ios::out); // Open a local file to write the received data
 
@@ -466,10 +640,19 @@ void receive_file(int sock, const std::string &hostname, int port, const std::st
 
     std::cerr << "File opened" << std::endl;
 
-    // Send an RRQ packet to request the file from the server
-    sendReadRequest(sock, hostname, port, remoteFilePath, mode, options);
+    // Send an RRQ packet to request the file from the server with options
+    sendReadRequest(sock, hostname, port, remoteFilePath, mode, options, params);
 
     bool transferComplete = false;
+
+    // Create sockaddr_in structure for the remote server
+    sockaddr_in serverAddr;
+    std::memset(&serverAddr, 0, sizeof(serverAddr));
+    serverAddr.sin_family = AF_INET;
+
+    // Initialize serverPort and firstOACK outside the loop
+    int serverPort = 0;
+    bool firstOACK = false;
 
     uint16_t blockID = 0; // Initialize the block ID
 
@@ -477,15 +660,59 @@ void receive_file(int sock, const std::string &hostname, int port, const std::st
     {
         uint16_t receivedBlockID;
         std::string data;
+        std::map<std::string, std::string> receivedOptions;
 
-        // Receive a DATA packet and store the data in 'data'
-        if (!receiveData(sock, receivedBlockID, data))
+        if (option_blksize_used == true && firstOACK == false)
         {
-            std::cerr << "Error: Failed to receive DATA." << std::endl;
-            close(sock);                   // Close the socket on error
-            outputFile.close();            // Close the output file
-            remove(localFilePath.c_str()); // Delete the partially downloaded file
-            return;
+            firstOACK = true;
+            // Wait for an ACK or OACK response after WRQ and capture the server's port
+            if (!receiveAck(sock, blockID, serverPort, params, receivedOptions))
+            {
+                std::cerr << "Error: Failed to receive ACK or OACK after WRQ." << std::endl;
+                handleError(sock, hostname, port, 0, 0, "Failed to receive ACK or OACK after WRQ");
+                close(sock);
+                return;
+            }
+
+            // Set the server's port and IP address in serverAddr
+            serverAddr.sin_port = htons(serverPort);
+            inet_pton(AF_INET, hostname.c_str(), &(serverAddr.sin_addr));
+        }
+
+        if (option_blksize_used == true)
+        {
+
+            // Send an ACK packet before receiving DATA
+            if (!sendAck(sock, blockID, hostname, serverPort, params))
+            {
+                std::cerr << "Error: Failed to send ACK before receiving DATA." << std::endl;
+                close(sock);                   // Close the socket on error
+                outputFile.close();            // Close the output file
+                remove(localFilePath.c_str()); // Delete the partially downloaded file
+                return;
+            }
+
+            // Receive a DATA packet and store the data in 'data' with block size option
+            if (!receiveData(sock, receivedBlockID, data, params, hostname))
+            {
+                std::cerr << "Error: Failed to receive DATA." << std::endl;
+                close(sock);                   // Close the socket on error
+                outputFile.close();            // Close the output file
+                remove(localFilePath.c_str()); // Delete the partially downloaded file
+                return;
+            }
+        }
+        else
+        {
+            // Receive a DATA packet and store the data in 'data' with block size option
+            if (!receiveData_without_options(sock, receivedBlockID, data, params, hostname))
+            {
+                std::cerr << "Error: Failed to receive DATA." << std::endl;
+                close(sock);                   // Close the socket on error
+                outputFile.close();            // Close the output file
+                remove(localFilePath.c_str()); // Delete the partially downloaded file
+                return;
+            }
         }
 
         // Check if the received block ID is the expected one
@@ -511,9 +738,20 @@ void receive_file(int sock, const std::string &hostname, int port, const std::st
         // Increment the block ID for the next ACK
         blockID = receivedBlockID;
 
-        // If the received data block is less than the maximum size, it indicates the end of the transfer
-        if (data.size() < 1024)
+        // If the received data block is less than the block size, it indicates the end of the transfer
+        if (data.size() < params.blksize)
         {
+            if (option_blksize_used == true)
+            {
+                if (!sendAck(sock, blockID, hostname, serverPort, params))
+                {
+                    std::cerr << "Error: Failed to send ACK before receiving DATA." << std::endl;
+                    close(sock);                   // Close the socket on error
+                    outputFile.close();            // Close the output file
+                    remove(localFilePath.c_str()); // Delete the partially downloaded file
+                    return;
+                }
+            }
             transferComplete = true;
         }
     }
@@ -534,29 +772,27 @@ void receive_file(int sock, const std::string &hostname, int port, const std::st
     std::cerr << "File download complete: " << localFilePath << std::endl;
 }
 
-bool isAscii(const std::string &filePath)
+bool isAscii(const std::string &fileName)
 {
-    std::ifstream file(filePath, std::ios::binary);
-
-    if (!file)
+    // Zjistěte příponu souboru
+    size_t dotPos = fileName.find_last_of('.');
+    if (dotPos == std::string::npos)
     {
-        std::cerr << "Failed to open file for reading asii." << std::endl;
-        return false;
+        std::cerr << "Invalid file name: " << fileName << std::endl;
+        return false; // Neplatný název souboru
     }
 
-    char buffer;
-    while (file.get(buffer))
-    {
-        if (buffer == '\0')
-        {
-            // První nula by mohla indikovat binární data
-            file.close();
-            return false; // Pravděpodobně binární data
-        }
-    }
+    std::string fileExtension = fileName.substr(dotPos + 1);
 
-    file.close();
-    return true; // Pravděpodobně ASCII data
+    // Porovnejte příponu s podporovanými režimy TFTP
+    if (fileExtension == "txt" || fileExtension == "html" || fileExtension == "xml")
+    {
+        return true; // Textový režim ('netascii')
+    }
+    else
+    {
+        return false; // Binární režim ('octet')
+    }
 }
 
 std::string determineMode(const std::string &filePath)
@@ -592,6 +828,7 @@ bool parseTFTPParameters(const std::string &Oparamstring, TFTPOparams &Oparams)
 
             if (paramName == "blksize")
             {
+                option_blksize_used = true;
                 int blksize = std::stoi(paramValue);
                 if (blksize >= 8 && blksize <= 65464) // Kontrola platného rozsahu blksize
                 {
@@ -731,7 +968,7 @@ int main(int argc, char *argv[])
     else if (!localFilePath.empty() && !remoteFilePath.empty())
     {
         // Receive a file from the server
-        receive_file(sock, hostname, port, localFilePath, remoteFilePath, mode, options);
+        receive_file(sock, hostname, port, localFilePath, remoteFilePath, mode, options, Oparams);
     }
     else
     {

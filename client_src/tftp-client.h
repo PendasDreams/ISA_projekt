@@ -13,6 +13,9 @@
 #include <thread>
 #include <sstream>
 #include <map>
+#include <algorithm> // Pro převod názvu souboru na malá písmena
+#include <iomanip>   // for std::hex
+
 enum class RequestType
 {
     READ,
