@@ -76,7 +76,7 @@ void sendWriteRequestWithOACK(int sock, const std::string &hostname, int port, c
     std::cerr << "Sent Write Request packet with content:" << std::endl;
     for (size_t i = 0; i < requestString.length(); i++)
     {
-        std::cerr << "0x" << std::hex << static_cast<int>(requestString[i]) << " ";
+        std::cerr << "0x" << std::dec << static_cast<int>(requestString[i]) << " ";
     }
     std::cerr << std::endl;
 }
@@ -289,8 +289,9 @@ void sendData(int sock, const std::string &hostname, int port, const std::string
     {
         std::cerr << "Error: Failed to send DATA." << std::endl;
     }
+    std::cout << std::dec;
 
-    std::cerr << "Sent DATA packet with block ID: " << blockID << std::endl; // Print the opcode
+    std::cerr << "Sent DATA packet with size: " << dataBuffer.size() << " bytes, block ID: " << blockID << std::endl; // Print the size and block ID
 
     // If you want to print the actual data being sent, you can do so here
     // std::cerr << "DATA Content: " << std::string(dataBuffer.begin() + 4, dataBuffer.end()) << std::endl;
@@ -375,6 +376,7 @@ void SendFile(int sock, const std::string &hostname, int port, const std::string
     sendWriteRequestWithOACK(sock, hostname, port, remoteFilePath, mode, options, params);
 
     std::map<std::string, std::string> receivedOptions;
+    std::cout << std::dec;
 
     // Wait for an ACK or OACK response after WRQ and capture the server's port
     if (!receiveAck(sock, blockID, serverPort, params, receivedOptions))
@@ -582,6 +584,8 @@ bool receiveData(int sock, uint16_t &receivedBlockID, std::string &data, const T
     data.assign(dataBuffer.begin() + 4, dataBuffer.begin() + receivedBytes);
 
     std::cerr << "Received DATA with block ID: " << receivedBlockID << std::endl;
+
+    std::cerr << "Sent DATA packet with size: " << dataBuffer.size() << " bytes, block ID: " << blockID << std::endl; // Print the size and block ID
 
     blockID = receivedBlockID + 1;
 
