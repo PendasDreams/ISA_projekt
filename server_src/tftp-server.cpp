@@ -35,6 +35,9 @@ struct TFTPPacket
 };
 
 bool lastblockfromoutside = false;
+bool blocksizeOptionUsed = false;
+int blockSize = 512;
+
 // Function to send an error packet
 void sendError(int sockfd, uint16_t errorCode, const std::string &errorMsg, sockaddr_in &clientAddr)
 {
@@ -48,7 +51,7 @@ void sendError(int sockfd, uint16_t errorCode, const std::string &errorMsg, sock
 
 bool sendDataPacket(int sockfd, sockaddr_in &clientAddr, uint16_t blockNum, const char *data, size_t dataSize, uint16_t blockSize)
 {
-    std::cerr << "Send data packet function " << blockNum << std::endl;
+    std::cerr << "Send data packet " << std::endl;
 
     uint16_t opcode = htons(DATA);
     uint16_t blockNumNetwork = htons(blockNum);
@@ -78,30 +81,33 @@ bool sendDataPacket(int sockfd, sockaddr_in &clientAddr, uint16_t blockNum, cons
 }
 
 // Function to send an OACK packet
-bool sendOACK(int sockfd, sockaddr_in &clientAddr, int blockSize)
+bool sendOACK(int sockfd, sockaddr_in &clientAddr, int blockSize, std::map<std::string, int> &options_map)
 {
     std::cerr << "Sending OACK packet" << std::endl;
 
+    std::vector<uint8_t> oackBuffer;
+
+    // Přidej opcode do vektoru
     uint16_t opcode = htons(OACK);
-    uint16_t blockSizeOption = htons(0x0004); // Blocksize Option
+    oackBuffer.insert(oackBuffer.end(), reinterpret_cast<uint8_t *>(&opcode), reinterpret_cast<uint8_t *>(&opcode) + sizeof(uint16_t));
 
-    // Construct the OACK options string
-    std::string optionsString = "blksize" + std::to_string(blockSize) + '\0';
+    if (blocksizeOptionUsed)
+    {
+        const char *optionName = "blksize";
+        oackBuffer.insert(oackBuffer.end(), optionName, optionName + strlen(optionName) + 1); // Včetně nulového znaku
 
-    // Calculate the packet size
-    int packetSize = sizeof(uint16_t) * 2 + optionsString.size();
+        // Přidej hodnotu volby (jako text) do vektoru
+        std::string blockSizeStr = std::to_string(blockSize);
+        oackBuffer.insert(oackBuffer.end(), blockSizeStr.begin(), blockSizeStr.end());
+        oackBuffer.push_back('\0'); // Přidej nulový znak za hodnotou
+    }
+    else
+    {
+        std::cout << "\"blksize\" not found in the map." << std::endl;
+    }
 
-    // Create a buffer to hold the OACK packet
-    std::vector<uint8_t> oackBuffer(packetSize);
-
-    // Copy the opcode into the buffer
-    memcpy(oackBuffer.data(), &opcode, sizeof(uint16_t));
-
-    // Copy the options string into the buffer
-    memcpy(oackBuffer.data() + sizeof(uint16_t), optionsString.c_str(), optionsString.size());
-
-    // Send the OACK packet to the client
-    ssize_t sentBytes = sendto(sockfd, oackBuffer.data(), packetSize, 0, (struct sockaddr *)&clientAddr, sizeof(clientAddr));
+    // Po dokončení vytvoření vektoru můžete poslat OACK packet
+    ssize_t sentBytes = sendto(sockfd, oackBuffer.data(), oackBuffer.size(), 0, (struct sockaddr *)&clientAddr, sizeof(clientAddr));
 
     // Check for errors
     if (sentBytes == -1)
@@ -126,31 +132,17 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filena
 
     std::cerr << "Sending file" << std::endl;
 
-    int blockSize = 512; // Default block size
-
-    std::cout << "Obsah options_map v sendfiledata:" << std::endl;
-    for (const auto &pair : options_map)
-    {
-        std::cout << pair.first << ": " << pair.second << std::endl;
-    }
-
     auto it = options_map.find("blksize");
 
     // If "blksize" option is found in the map, use the specified block size
-    if (it != options_map.end())
+    if (blocksizeOptionUsed)
     {
-        blockSize = it->second; // Read the value from the map
-        std::cout << "Value for \"blksize\" is " << blockSize << std::endl;
-        sendOACK(sockfd, clientAddr, blockSize);
+        sendOACK(sockfd, clientAddr, blockSize, options_map);
         if (!receiveAck(sockfd, 0, clientAddr))
         {
             file.close();
             return false;
         }
-    }
-    else
-    {
-        std::cout << "\"blksize\" not found in the map." << std::endl;
     }
 
     char dataBuffer[blockSize]; // Use the outer dataBuffer with maximum size
@@ -163,12 +155,8 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filena
         file.read(dataBuffer, blockSize); // Use the specified blockSize
         std::streamsize bytesRead = file.gcount();
 
-        std::cerr << "Bytes read: " << bytesRead << std::endl;
-
         if (bytesRead > 0)
         {
-            std::cerr << "Data loaded into buffer" << std::endl;
-
             if (!sendDataPacket(sockfd, clientAddr, blockNum, dataBuffer, bytesRead, bytesRead))
             {
                 file.close();
@@ -185,7 +173,7 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filena
 
             if (bytesRead < blockSize)
             {
-                std::cerr << "No more data to send < maxdatasize: " << blockNum << std::endl;
+                std::cerr << "No more data to send" << std::endl;
                 break;
             }
 
@@ -420,10 +408,18 @@ bool hasOptions(TFTPPacket &requestPacket, std::string &filename, std::string &m
         }
     }
 
-    std::cout << "Obsah options_map:" << std::endl;
-    for (const auto &pair : options_map)
+    auto it = options_map.find("blksize");
+
+    // If "blksize" option is found in the map, use the specified block size
+    if (it != options_map.end())
     {
-        std::cout << pair.first << ": " << pair.second << std::endl;
+        blockSize = it->second; // Read the value from the map
+        std::cout << "Value for \"blksize\" is " << blockSize << std::endl;
+        blocksizeOptionUsed = true;
+    }
+    else
+    {
+        std::cout << "\"blksize\" not found in the map." << std::endl;
     }
 
     // Options processed successfully
@@ -507,6 +503,16 @@ void runTFTPServer(int port)
         }
         else if (opcode == WRQ)
         {
+
+            if (hasOptions(requestPacket, filename, mode, options_map))
+            {
+                std::cout << "Option included." << std::endl;
+            }
+            else
+            {
+                std::cout << "No options included in the RRQ packet." << std::endl;
+            }
+
             std::cout << "Received WRQ for file: " << filename << " from client." << std::endl;
 
             std::ofstream file(filename, std::ios::binary);
@@ -517,12 +523,20 @@ void runTFTPServer(int port)
             }
             else
             {
-                // Send initial ACK (block number 0) to start the transfer
-                if (!sendAck(sockfd, clientAddr, 0))
+
+                if (!options_map.empty())
                 {
-                    std::cerr << "Error sending initial ACK" << std::endl;
-                    file.close();
-                    continue;
+
+                    sendOACK(sockfd, clientAddr, blockSize, options_map);
+                }
+                else
+                {
+                    if (!sendAck(sockfd, clientAddr, 0))
+                    {
+                        std::cerr << "Error sending initial ACK" << std::endl;
+                        file.close();
+                        continue;
+                    }
                 }
 
                 // Start receiving file data in DATA packets
@@ -534,6 +548,8 @@ void runTFTPServer(int port)
                 {
                     // Wait for DATA packet
                     TFTPPacket dataPacket;
+                    memset(&dataPacket, 0, sizeof(dataPacket));
+
                     if (receiveDataPacket(sockfd, dataPacket, clientAddr, blockNum, file))
                     {
 
