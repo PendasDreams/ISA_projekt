@@ -410,16 +410,23 @@ void SendFile(int sock, const std::string &hostname, int port, const std::string
 
             sendData(sock, hostname, serverPort, std::string(buffer, bytesRead)); // Odeslat data na server
 
+            // while (true)
+            // {
+            //     /* code */
+            // }
+
             // Pokud klient nepřijme ACK v požadovaném čase, pokusí se znovu odeslat datový paket
             int numRetries = 0;
             bool ackReceived = false;
             while (!ackReceived && numRetries < max_retries)
             {
+
                 ackReceived = receiveAck(sock, blockID, serverPort, params, receivedOptions);
                 if (!ackReceived)
                 {
                     // Pokud ACK nebyl přijat včas, pokusit se znovu odeslat datový paket
                     std::cerr << "Warning: ACK not received for block " << blockID << ", retrying..." << std::endl;
+
                     sendData(sock, hostname, serverPort, std::string(buffer, bytesRead));
                     numRetries++;
                 }

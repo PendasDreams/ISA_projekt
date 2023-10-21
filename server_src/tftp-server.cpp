@@ -159,11 +159,34 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filena
     std::cerr << "Sending file" << std::endl;
 
     // If "blksize" option is found in the map, use the specified block size
-    if (blocksizeOptionUsed)
+    if (blocksizeOptionUsed || timeoutOptionUsed)
     {
-        sendOACK(sockfd, clientAddr, options_map, params);
-        if (!receiveAck(sockfd, 0, clientAddr, params.timeout)) // Add timeout to receiveAck
+        int retries = 0;
+        const int maxRetries = 4; // As per RFC specification
+
+        bool ackReceived = false;
+
+        while (retries < maxRetries)
         {
+            if (!sendOACK(sockfd, clientAddr, options_map, params))
+            {
+                continue;
+            }
+
+            if (receiveAck(sockfd, 0, clientAddr, params.timeout)) // Add timeout to receiveAck
+            {
+                ackReceived = true;
+                break;
+            }
+            else
+            {
+                retries++;
+            }
+        }
+
+        if (!ackReceived)
+        {
+            std::cerr << "Failed to receive ACK after multiple retries" << std::endl;
             file.close();
             return false;
         }
@@ -181,15 +204,33 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filena
 
         if (bytesRead > 0)
         {
-            if (!sendDataPacket(sockfd, clientAddr, blockNum, dataBuffer, bytesRead, bytesRead))
+            int retries = 0;
+            const int maxRetries = 4; // As per RFC specification
+            bool ackReceived = false;
+
+            while (retries < maxRetries)
             {
-                file.close();
-                return false;
+                if (!sendDataPacket(sockfd, clientAddr, blockNum, dataBuffer, bytesRead, bytesRead))
+                {
+                    file.close();
+                    return false;
+                }
+
+                // Wait for ACK for the sent block with timeout
+                if (receiveAck(sockfd, blockNum, clientAddr, params.timeout)) // Add timeout to receiveAck
+                {
+                    ackReceived = true;
+                    break;
+                }
+                else
+                {
+                    retries++;
+                }
             }
 
-            // Wait for ACK for the sent block with timeout
-            if (!receiveAck(sockfd, blockNum, clientAddr, params.timeout)) // Add timeout to receiveAck
+            if (!ackReceived)
             {
+                std::cerr << "Failed to receive ACK for block " << blockNum << " after multiple retries" << std::endl;
                 file.close();
                 return false;
             }
@@ -213,7 +254,6 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filena
     file.close();
     return true;
 }
-
 // Function to receive an ACK packet
 bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr, int timeout)
 {
@@ -581,7 +621,6 @@ void runTFTPServer(int port)
         }
         else if (opcode == WRQ)
         {
-
             if (hasOptions(requestPacket, filename, mode, options_map, params))
             {
                 std::cout << "Option included." << std::endl;
@@ -601,11 +640,12 @@ void runTFTPServer(int port)
             }
             else
             {
-
                 if (!options_map.empty())
                 {
-
-                    sendOACK(sockfd, clientAddr, options_map, params);
+                    if (!sendOACK(sockfd, clientAddr, options_map, params))
+                    {
+                        continue;
+                    }
                 }
                 else
                 {
@@ -624,31 +664,58 @@ void runTFTPServer(int port)
 
                 while (!lastBlockReceived)
                 {
-                    // Wait for DATA packet
+                    int retries = 0;
+                    const int maxRetries = 4; // As per RFC specification
+                    bool dataPacketReceived = false;
 
-                    if (receiveDataPacket(sockfd, clientAddr, blockNum, file, params))
+                    while (retries < maxRetries)
                     {
-
-                        // Send ACK for the received block
-                        if (!sendAck(sockfd, clientAddr, blockNum))
+                        if (receiveDataPacket(sockfd, clientAddr, blockNum, file, params))
                         {
-                            std::cerr << "Error sending ACK for block " << blockNum << std::endl;
+                            dataPacketReceived = true;
                             break;
                         }
-
-                        // Check if the received block was the last block
-                        if (lastblockfromoutside == true)
+                        else
                         {
-                            lastBlockReceived = true;
+                            retries++;
+                            if (!options_map.empty() && blockNum == 1)
+                            {
+                                if (!sendOACK(sockfd, clientAddr, options_map, params))
+                                {
+                                    continue;
+                                }
+                            }
+                            else
+                            {
+                                if (!sendAck(sockfd, clientAddr, blockNum - 1))
+                                {
+                                    std::cerr << "Error sending initial ACK" << std::endl;
+                                    file.close();
+                                    continue;
+                                }
+                            }
                         }
-                        blockNum++;
                     }
-                    else
+
+                    if (!dataPacketReceived)
                     {
-                        // Error receiving data packet, break the loop
-                        std::cerr << "Error receiving DATA packet for block " << blockNum << std::endl;
+                        std::cerr << "Failed to receive DATA packet for block " << blockNum << " after multiple retries" << std::endl;
                         break;
                     }
+
+                    // Send ACK for the received block
+                    if (!sendAck(sockfd, clientAddr, blockNum))
+                    {
+                        std::cerr << "Error sending ACK for block " << blockNum << std::endl;
+                        break;
+                    }
+
+                    // Check if the received block was the last block
+                    if (lastblockfromoutside == true)
+                    {
+                        lastBlockReceived = true;
+                    }
+                    blockNum++;
                 }
 
                 file.close(); // Close the file when the transfer is complete or encounters an error
