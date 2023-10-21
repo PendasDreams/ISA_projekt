@@ -8,7 +8,7 @@
 #include <map>
 #include <iomanip> // Pro std::setw a std::setfill
 
-bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr);
+bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr, int timeout);
 
 // TFTP opcodes
 const uint16_t RRQ = 1;
@@ -36,6 +36,7 @@ struct TFTPPacket
 
 bool lastblockfromoutside = false;
 bool blocksizeOptionUsed = false;
+bool timeoutOptionUsed = false;
 
 struct TFTPOparams
 {
@@ -97,7 +98,9 @@ bool sendOACK(int sockfd, sockaddr_in &clientAddr, std::map<std::string, int> &o
     uint16_t opcode = htons(OACK);
     oackBuffer.insert(oackBuffer.end(), reinterpret_cast<uint8_t *>(&opcode), reinterpret_cast<uint8_t *>(&opcode) + sizeof(uint16_t));
 
-    if (blocksizeOptionUsed)
+    // Přidej "blksize" option, pokud je k dispozici v options_map
+    auto blksizeIt = options_map.find("blksize");
+    if (blksizeIt != options_map.end())
     {
         const char *optionName = "blksize";
         oackBuffer.insert(oackBuffer.end(), optionName, optionName + strlen(optionName) + 1); // Včetně nulového znaku
@@ -110,6 +113,23 @@ bool sendOACK(int sockfd, sockaddr_in &clientAddr, std::map<std::string, int> &o
     else
     {
         std::cout << "\"blksize\" not found in the map." << std::endl;
+    }
+
+    // Přidej "timeout" option, pokud je k dispozici v options_map
+    auto timeoutIt = options_map.find("timeout");
+    if (timeoutIt != options_map.end())
+    {
+        const char *optionName = "timeout";
+        oackBuffer.insert(oackBuffer.end(), optionName, optionName + strlen(optionName) + 1); // Včetně nulového znaku
+
+        // Přidej hodnotu volby (jako text) do vektoru
+        std::string timeoutStr = std::to_string(params.timeout);
+        oackBuffer.insert(oackBuffer.end(), timeoutStr.begin(), timeoutStr.end());
+        oackBuffer.push_back('\0'); // Přidej nulový znak za hodnotou
+    }
+    else
+    {
+        std::cout << "\"timeout\" not found in the map." << std::endl;
     }
 
     // Po dokončení vytvoření vektoru můžete poslat OACK packet
@@ -138,13 +158,11 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filena
 
     std::cerr << "Sending file" << std::endl;
 
-    auto it = options_map.find("blksize");
-
     // If "blksize" option is found in the map, use the specified block size
     if (blocksizeOptionUsed)
     {
         sendOACK(sockfd, clientAddr, options_map, params);
-        if (!receiveAck(sockfd, 0, clientAddr))
+        if (!receiveAck(sockfd, 0, clientAddr, params.timeout)) // Add timeout to receiveAck
         {
             file.close();
             return false;
@@ -169,9 +187,8 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filena
                 return false;
             }
 
-            // Wait for ACK for the sent block
-            // You need to implement receiveAck function to handle ACKs
-            if (!receiveAck(sockfd, blockNum, clientAddr))
+            // Wait for ACK for the sent block with timeout
+            if (!receiveAck(sockfd, blockNum, clientAddr, params.timeout)) // Add timeout to receiveAck
             {
                 file.close();
                 return false;
@@ -198,10 +215,20 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filena
 }
 
 // Function to receive an ACK packet
-bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr)
+bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr, int timeout)
 {
     TFTPPacket ackPacket;
     socklen_t clientAddrLen = sizeof(clientAddr);
+
+    // Set the timeout for recvfrom
+    struct timeval tv;
+    tv.tv_sec = timeout;
+    tv.tv_usec = 0;
+    if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0)
+    {
+        std::cerr << "Failed to set socket timeout" << std::endl;
+        return false;
+    }
 
     while (true)
     {
@@ -209,6 +236,11 @@ bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr)
 
         if (bytesReceived < 0)
         {
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+            {
+                std::cerr << "Timeout waiting for ACK packet" << std::endl;
+                return false;
+            }
             std::cerr << "Error receiving ACK packet" << std::endl;
             return false;
         }
@@ -228,7 +260,6 @@ bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr)
             if (blockNum == expectedBlockNum)
             {
                 std::cerr << "Received an ACK packet" << std::endl;
-
                 return true;
             }
             else if (blockNum < expectedBlockNum)
@@ -258,10 +289,25 @@ bool receiveDataPacket(int sockfd, sockaddr_in &clientAddr, uint16_t expectedBlo
     socklen_t clientAddrLen = sizeof(clientAddr);
     dataPacket.resize(params.blksize + 4, 0); // Inicializace vektoru nulami
 
+    // Set the timeout for recvfrom
+    struct timeval tv;
+    tv.tv_sec = params.timeout;
+    tv.tv_usec = 0;
+    if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0)
+    {
+        std::cerr << "Failed to set socket timeout" << std::endl;
+        return false;
+    }
+
     ssize_t bytesReceived = recvfrom(sockfd, dataPacket.data(), dataPacket.size(), 0, (struct sockaddr *)&clientAddr, &clientAddrLen);
 
     if (bytesReceived < 0)
     {
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+        {
+            std::cerr << "Timeout waiting for DATA packet" << std::endl;
+            return false;
+        }
         std::cerr << "Error receiving DATA packet" << std::endl;
         return false;
     }
@@ -343,7 +389,6 @@ bool sendAck(int sockfd, sockaddr_in &clientAddr, uint16_t blockNum)
 
 bool hasOptions(TFTPPacket &requestPacket, std::string &filename, std::string &mode, std::map<std::string, int> &options_map, TFTPOparams &params)
 {
-
     int optionValue;
     std::string optionName;
 
@@ -416,19 +461,31 @@ bool hasOptions(TFTPPacket &requestPacket, std::string &filename, std::string &m
         }
     }
 
-    auto it = options_map.find("blksize");
+    auto blksizeIt = options_map.find("blksize");
+    auto timeoutIt = options_map.find("timeout");
 
     // If "blksize" option is found in the map, use the specified block size
-    if (it != options_map.end())
+    if (blksizeIt != options_map.end())
     {
-        params.blksize = it->second; // Read the value from the map
+        params.blksize = blksizeIt->second; // Read the value from the map
         std::cout << "Value for \"blksize\" is " << params.blksize << std::endl;
         blocksizeOptionUsed = true;
     }
     else
     {
         std::cout << "\"blksize\" not found in the map." << std::endl;
-        return false;
+    }
+
+    // If "timeout" option is found in the map, use the specified timeout
+    if (timeoutIt != options_map.end())
+    {
+        params.timeout = timeoutIt->second; // Read the value from the map
+        std::cout << "Value for \"timeout\" is " << params.timeout << std::endl;
+        timeoutOptionUsed = true;
+    }
+    else
+    {
+        std::cout << "\"timeout\" not found in the map." << std::endl;
     }
 
     // Options processed successfully
@@ -458,6 +515,11 @@ void runTFTPServer(int port)
         return;
     }
 
+    // Get the current socket timeout settings for restoration
+    struct timeval original_tv;
+    socklen_t len = sizeof(original_tv);
+    getsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &original_tv, &len);
+
     while (true)
     {
         TFTPPacket requestPacket;
@@ -465,6 +527,9 @@ void runTFTPServer(int port)
         params.blksize = 512;
         params.timeout = 5;
         blocksizeOptionUsed = false;
+        timeoutOptionUsed = false;
+
+        setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &original_tv, sizeof(original_tv));
 
         memset(&requestPacket, 0, sizeof(requestPacket));
 
