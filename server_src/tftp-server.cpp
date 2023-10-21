@@ -246,11 +246,13 @@ bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr)
     }
 }
 
-bool receiveDataPacket(int sockfd, TFTPPacket &dataPacket, sockaddr_in &clientAddr, uint16_t expectedBlockNum, std::ofstream &file)
+bool receiveDataPacket(int sockfd, sockaddr_in &clientAddr, uint16_t expectedBlockNum, std::ofstream &file)
 {
+    std::vector<uint8_t> dataPacket;
     socklen_t clientAddrLen = sizeof(clientAddr);
+    dataPacket.resize(blockSize + 4, 0); // Inicializace vektoru nulami
 
-    ssize_t bytesReceived = recvfrom(sockfd, &dataPacket, sizeof(dataPacket), 0, (struct sockaddr *)&clientAddr, &clientAddrLen);
+    ssize_t bytesReceived = recvfrom(sockfd, dataPacket.data(), dataPacket.size(), 0, (struct sockaddr *)&clientAddr, &clientAddrLen);
 
     if (bytesReceived < 0)
     {
@@ -265,11 +267,11 @@ bool receiveDataPacket(int sockfd, TFTPPacket &dataPacket, sockaddr_in &clientAd
         return false;
     }
 
-    uint16_t opcode = ntohs(dataPacket.opcode);
+    uint16_t opcode = ntohs(*reinterpret_cast<uint16_t *>(dataPacket.data()));
 
     if (opcode == DATA)
     {
-        uint16_t blockNum = ntohs(*(uint16_t *)dataPacket.data);
+        uint16_t blockNum = ntohs(*reinterpret_cast<uint16_t *>(dataPacket.data() + sizeof(uint16_t)));
 
         if (blockNum == expectedBlockNum)
         {
@@ -283,9 +285,9 @@ bool receiveDataPacket(int sockfd, TFTPPacket &dataPacket, sockaddr_in &clientAd
             }
 
             // Write the data to the file
-            file.write(dataPacket.data + sizeof(uint16_t), dataSize);
+            file.write(reinterpret_cast<const char *>(dataPacket.data() + sizeof(uint16_t) * 2), dataSize);
 
-            if (dataSize < MAX_DATA_SIZE - 2)
+            if (dataSize < blockSize - 2)
             {
                 lastblockfromoutside = true;
             }
@@ -420,6 +422,7 @@ bool hasOptions(TFTPPacket &requestPacket, std::string &filename, std::string &m
     else
     {
         std::cout << "\"blksize\" not found in the map." << std::endl;
+        return false;
     }
 
     // Options processed successfully
@@ -458,6 +461,8 @@ void runTFTPServer(int port)
         socklen_t clientAddrLen = sizeof(clientAddr);
 
         std::map<std::string, int> options_map;
+
+        blockSize = 512;
 
         ssize_t bytesReceived = recvfrom(sockfd, &requestPacket, sizeof(requestPacket), 0, (struct sockaddr *)&clientAddr, &clientAddrLen);
         std::cerr << "received shit" << std::endl;
@@ -547,10 +552,8 @@ void runTFTPServer(int port)
                 while (!lastBlockReceived)
                 {
                     // Wait for DATA packet
-                    TFTPPacket dataPacket;
-                    memset(&dataPacket, 0, sizeof(dataPacket));
 
-                    if (receiveDataPacket(sockfd, dataPacket, clientAddr, blockNum, file))
+                    if (receiveDataPacket(sockfd, clientAddr, blockNum, file))
                     {
 
                         // Send ACK for the received block
@@ -561,7 +564,7 @@ void runTFTPServer(int port)
                         }
 
                         // Check if the received block was the last block
-                        if (dataPacket.opcode != htons(DATA) || lastblockfromoutside == true)
+                        if (lastblockfromoutside == true)
                         {
                             lastBlockReceived = true;
                         }
