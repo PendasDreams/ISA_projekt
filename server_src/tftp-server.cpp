@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <map>
 #include <iomanip> // Pro std::setw a std::setfill
+#include <csignal>
 
 bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr, int timeout);
 
@@ -148,10 +149,14 @@ bool sendOACK(int sockfd, sockaddr_in &clientAddr, std::map<std::string, int> &o
 // Function to send a file in DATA packets
 bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filename, std::map<std::string, int> &options_map, TFTPOparams &params)
 {
-    std::ifstream file(filename, std::ios::binary);
+    std::cerr << "we are here fucked filename" << std::endl;
+    std::ifstream file;
 
-    if (!file)
+    file.open(filename, std::ios::binary);
+
+        if (!file)
     {
+        std::cerr << "we are here fucked filename" << std::endl;
         sendError(sockfd, ERROR_FILE_NOT_FOUND, "File not found", clientAddr);
         return false;
     }
@@ -192,14 +197,14 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filena
         }
     }
 
-    char dataBuffer[params.blksize]; // Use the outer dataBuffer with maximum size
+    std::vector<char> dataBuffer(params.blksize); // Use a vector with maximum size
 
     uint16_t blockNum = 1;
 
     while (true)
     {
         // Read data into the buffer
-        file.read(dataBuffer, params.blksize); // Use the specified blockSize
+        file.read(dataBuffer.data(), params.blksize); // Use dataBuffer.data() to get a pointer to the underlying array
         std::streamsize bytesRead = file.gcount();
 
         if (bytesRead > 0)
@@ -210,7 +215,7 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filena
 
             while (retries < maxRetries)
             {
-                if (!sendDataPacket(sockfd, clientAddr, blockNum, dataBuffer, bytesRead, bytesRead))
+                if (!sendDataPacket(sockfd, clientAddr, blockNum, dataBuffer.data(), bytesRead, bytesRead))
                 {
                     file.close();
                     return false;
@@ -248,6 +253,7 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filena
             std::cerr << "No more data to send" << std::endl;
             break;
         }
+        dataBuffer.clear();
     }
 
     options_map.clear();
@@ -258,6 +264,8 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filena
 bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr, int timeout)
 {
     TFTPPacket ackPacket;
+    memset(&ackPacket, 0, sizeof(TFTPPacket));
+
     socklen_t clientAddrLen = sizeof(clientAddr);
 
     // Set the timeout for recvfrom
@@ -326,6 +334,7 @@ bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr, 
 bool receiveDataPacket(int sockfd, sockaddr_in &clientAddr, uint16_t expectedBlockNum, std::ofstream &file, TFTPOparams &params)
 {
     std::vector<uint8_t> dataPacket;
+    dataPacket.clear();
     socklen_t clientAddrLen = sizeof(clientAddr);
     dataPacket.resize(params.blksize + 4, 0); // Inicializace vektoru nulami
 
@@ -604,18 +613,9 @@ void runTFTPServer(int port)
                 std::cout << "No options included in the RRQ packet." << std::endl;
             }
 
-            std::ifstream file(filename, std::ios::binary);
-
-            if (!file)
+            if (!sendFileData(sockfd, clientAddr, filename, options_map, params))
             {
-                sendError(sockfd, ERROR_FILE_NOT_FOUND, "File not found", clientAddr);
-            }
-            else
-            {
-                if (!sendFileData(sockfd, clientAddr, filename, options_map, params))
-                {
-                    std::cerr << "Error sending file data" << std::endl;
-                }
+                std::cerr << "Error sending file data" << std::endl;
             }
         }
         else if (opcode == WRQ)
@@ -725,13 +725,23 @@ void runTFTPServer(int port)
         {
             sendError(sockfd, ERROR_UNDEFINED, "Undefined request", clientAddr);
         }
+        memset(&requestPacket, 0, sizeof(requestPacket));
     }
 
     close(sockfd);
 }
 
+void sigintHandler(int signal)
+{
+    std::cout << "Received SIGINT (Ctrl+C). Terminating gracefully..." << std::endl;
+    // Perform any cleanup or termination tasks here
+    std::exit(0); // Terminate the program
+}
+
 int main()
 {
+    // std::signal(SIGINT, sigintHandler);
+
     int port = 1070; // Default TFTP port
     runTFTPServer(port);
     return 0;

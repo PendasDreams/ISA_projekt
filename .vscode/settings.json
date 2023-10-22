@@ -54,6 +54,7 @@
     "thread": "cpp",
     "iomanip": "cpp",
     "sstream": "cpp",
-    "map": "cpp"
+    "map": "cpp",
+    "csignal": "cpp"
   }
 }

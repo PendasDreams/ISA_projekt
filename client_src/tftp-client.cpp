@@ -22,13 +22,13 @@ bool isAscii(const std::string &fileName)
     // Porovnejte příponu s podporovanými režimy TFTP
     if (fileExtension == "txt" || fileExtension == "html" || fileExtension == "xml")
     {
-        std::cerr << "file is ascii " << fileName << std::endl;
+        // std::cerr << "file is ascii " << fileName << std::endl;
 
         return true; // Textový režim ('netascii')
     }
     else
     {
-        std::cerr << "file is octet " << fileName << std::endl;
+        // std::cerr << "file is octet " << fileName << std::endl;
 
         return false; // Binární režim ('octet')
     }
@@ -186,6 +186,15 @@ bool sendWriteRequest(int sock, const std::string &hostname, int port, const std
         std::cerr << "Error: Failed to send WRQ packet." << std::endl;
         return false;
     }
+
+    std::cerr << std::endl;
+
+    std::cerr << "WRQ " << hostname << ":" << port << " \"" << filepath << "\" " << mode;
+    if (!options.empty())
+    {
+        std::cerr << options;
+    }
+    std::cerr << std::endl;
     return true;
 }
 
@@ -302,7 +311,9 @@ bool receiveAck(int sock, uint16_t &receivedBlockID, int &serverPort, const TFTP
         // You can similarly check other options as needed
     }
 
-    std::cerr << "Received " << (opcode == 4 ? "ACK" : "OACK") << " with block ID: " << receivedBlockID << " from server port: " << serverPort << std::endl;
+    // std::cerr << "DATA " << senderAddr << ":" << serverPort << ":" << ntohs(serverAddr.sin_port) << " " << receivedBlockID << std::endl;
+
+    std::cerr << (opcode == 4 ? "ACK" : "OACK") << " " << inet_ntoa(senderAddr.sin_addr) << ":" << ntohs(senderAddr.sin_port) << " " << receivedBlockID << std::endl;
 
     return true;
 }
@@ -337,7 +348,8 @@ bool sendData(int sock, const std::string &hostname, int port, const std::string
     }
     std::cout << std::dec;
 
-    std::cerr << "Sent DATA packet with size: " << dataBuffer.size() << " bytes, block ID: " << blockID << std::endl; // Print the size and block ID
+    // std::cerr << "Sent DATA packet with size: " << dataBuffer.size() << " bytes, block ID: " << blockID << std::endl; // Print the size and block ID
+
     return true;
 }
 
@@ -348,10 +360,10 @@ int SendFile(int sock, const std::string &hostname, int port, const std::string 
     std::ifstream file;
 
     std::string userInput;
-    std::cout << "Zadejte řádek textu: ";
+    // std::cout << "Zadejte řádek textu: ";
     std::getline(std::cin, userInput);
 
-    std::cout << "Zadali jste: " << userInput << std::endl;
+    // std::cout << "Zadali jste: " << userInput << std::endl;
 
     file.open(remoteFilePath, std::ios::binary);
 
@@ -404,7 +416,7 @@ int SendFile(int sock, const std::string &hostname, int port, const std::string 
     bool isOACK = (blockID == 0);
 
     std::cerr << "Received " << (isOACK ? "OACK" : "ACK") << " after WRQ. Starting data transfer." << std::endl;
-    std::cerr << "Server provided port for data transfer: " << serverPort << std::endl; // Print the server's port
+    // std::cerr << "Server provided port for data transfer: " << serverPort << std::endl; // Print the server's port
 
     bool transferComplete = false;
     int max_retries = 4;
@@ -542,7 +554,9 @@ void sendReadRequest(int sock, const std::string &hostname, int port, const std:
         std::cerr << "Error: Failed to send RRQ packet." << std::endl;
     }
 
-    std::cerr << "Read Request " << hostname << ":" << port << " \"" << remoteFilePath << "\" " << mode;
+    std::cerr << std::endl;
+
+    std::cerr << "RRQ " << hostname << ":" << port << " \"" << remoteFilePath << "\" " << mode;
     if (!options.empty())
     {
         std::cerr << " with options: " << options;
@@ -580,7 +594,7 @@ bool receiveData(int sock, uint16_t &receivedBlockID, std::string &data, const T
     // Extract the data from the packet (skip the first 4 bytes which are the header)
     data.assign(dataBuffer.begin() + 4, dataBuffer.begin() + receivedBytes);
 
-    std::cerr << "Received DATA with block ID: " << receivedBlockID << std::endl;
+    std::cerr << "DATA with block ID: " << receivedBlockID << std::endl;
 
     std::cerr << "Sent DATA packet with size: " << dataBuffer.size() << " bytes, block ID: " << blockID << std::endl; // Print the size and block ID
 
@@ -640,7 +654,15 @@ bool receiveData_without_options(int sock, uint16_t &receivedBlockID, std::strin
         return false;
     }
 
-    std::cerr << "Received DATA with block ID: " << receivedBlockID << " from server port: " << ntohs(serverAddr.sin_port) << std::endl;
+    sockaddr_in localAddr;
+    socklen_t addrLen = sizeof(localAddr);
+    if (getsockname(sock, (struct sockaddr *)&localAddr, &addrLen) == -1)
+    {
+        std::cerr << "Error: Failed to get local port." << std::endl;
+        return false;
+    }
+
+    std::cerr << "DATA " << hostname << ":" << ntohs(localAddr.sin_port) << ":" << ntohs(serverAddr.sin_port) << " " << receivedBlockID << std::endl;
 
     return true;
 }
@@ -674,7 +696,7 @@ bool sendAck(int sock, uint16_t blockID, const std::string &hostname, int server
         return false;
     }
 
-    std::cerr << "Sent ACK with block ID: " << blockID << " to server port: " << serverPort << std::endl;
+    // std::cerr << "Sent ACK with block ID: " << blockID << " to server port: " << serverPort << std::endl;
 
     return true;
 }
@@ -763,6 +785,9 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
         {
 
             // Receive a DATA packet and store the data in 'data' with block size option
+
+            std::cerr << "We no opitons." << std::endl;
+
             if (!receiveData_without_options(sock, receivedBlockID, data, params, hostname))
             {
                 std::cerr << "Error: Failed to receive DATA." << std::endl;
@@ -886,6 +911,7 @@ bool parseTFTPParameters(const std::string &Oparamstring, TFTPOparams &Oparams)
         }
     }
 
+    options_used = true;
     return true;
 }
 
