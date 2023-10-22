@@ -3,20 +3,138 @@
 // Define the initial block ID
 uint16_t blockID = 0;
 
-struct TFTPOparams
-{
-    uint16_t blksize;
-    uint16_t timeout_min;
-    uint16_t timeout_max;
-    uint16_t transfersize;
-};
-
-bool option_blksize_used = false;
 bool options_used = false;
+bool option_blksize_used = false;
 bool option_timeout_used = false;
 
+bool isAscii(const std::string &fileName)
+{
+    // Zjistěte příponu souboru
+    size_t dotPos = fileName.find_last_of('.');
+    if (dotPos == std::string::npos)
+    {
+        std::cerr << "Invalid file name: " << fileName << std::endl;
+        return false; // Neplatný název souboru
+    }
+
+    std::string fileExtension = fileName.substr(dotPos + 1);
+
+    // Porovnejte příponu s podporovanými režimy TFTP
+    if (fileExtension == "txt" || fileExtension == "html" || fileExtension == "xml")
+    {
+        std::cerr << "file is ascii " << fileName << std::endl;
+
+        return true; // Textový režim ('netascii')
+    }
+    else
+    {
+        std::cerr << "file is octet " << fileName << std::endl;
+
+        return false; // Binární režim ('octet')
+    }
+}
+
+std::string determineMode(const std::string &filePath)
+{
+
+    if (isAscii(filePath))
+    {
+        return "netascii"; // Pokud jsou to ASCII data, použijte "netascii" režim
+    }
+    else
+    {
+        return "octet"; // Pokud jsou to binární data, použijte "octet" režim
+    }
+}
+
+// Function to receive ACK (Acknowledgment) packet and capture the server's port
+
+std::string hexStringToCharString(const std::string &hexStr)
+{
+    std::string charStr;
+    for (size_t i = 0; i < hexStr.length(); i += 2)
+    {
+        // Extract two characters from the hex string
+        std::string hexPair = hexStr.substr(i, 2);
+
+        // Convert the hex pair to an integer
+        int hexValue = std::stoi(hexPair, nullptr, 16);
+
+        // Convert the integer to a char and append it to the result
+        charStr += static_cast<char>(hexValue);
+    }
+    return charStr;
+}
+
+// Function to set socket timeout
+bool setSocketTimeout(int sock, int timeout)
+{
+    struct timeval tv;
+    tv.tv_sec = timeout;
+    tv.tv_usec = 0;
+    if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0)
+    {
+        std::cerr << "Error: Failed to set socket timeout." << std::endl;
+        return false;
+    }
+    return true;
+}
+
+bool isBinaryFormat(const std::string &filename)
+{
+    // Získej koncovku souboru z názvu
+    size_t dotPosition = filename.find_last_of('.');
+    if (dotPosition == std::string::npos)
+    {
+        // Pokud nemáme koncovku, nelze určit formát, takže použijeme octet mode
+        return true;
+    }
+
+    std::string fileExtension = filename.substr(dotPosition + 1);
+
+    // Převeď koncovku na malá písmena pro jednodušší porovnání
+    std::transform(fileExtension.begin(), fileExtension.end(), fileExtension.begin(), ::tolower);
+
+    // Definuj seznam koncovek, které budeme považovat za binární formáty
+    std::vector<std::string> binaryExtensions = {"bin", "jpg", "png", "exe"};
+
+    // Porovnej koncovku s seznamem binárních koncovek
+    return std::find(binaryExtensions.begin(), binaryExtensions.end(), fileExtension) != binaryExtensions.end();
+}
+
+// Function to handle errors
+void handleError(int sock, const std::string &hostname, int srcPort, int dstPort, uint16_t errorCode, const std::string &errorMsg)
+{
+    // Create an ERROR packet
+    uint8_t errorBuffer[4 + errorMsg.length() + 1]; // +1 for null-terminated string
+    errorBuffer[0] = 0;                             // High byte of opcode (0 for ERROR)
+    errorBuffer[1] = 5;                             // Low byte of opcode (5 for ERROR)
+    errorBuffer[2] = (errorCode >> 8) & 0xFF;       // High byte of error code
+    errorBuffer[3] = errorCode & 0xFF;              // Low byte of error code
+
+    // Add the error message to the buffer
+    std::memcpy(errorBuffer + 4, errorMsg.c_str(), errorMsg.length());
+    errorBuffer[4 + errorMsg.length()] = '\0'; // Null-terminated string
+
+    // Create sockaddr_in structure for the remote server (serverAddr)
+    sockaddr_in serverAddr;
+    std::memset(&serverAddr, 0, sizeof(serverAddr));
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(dstPort);
+    inet_pton(AF_INET, hostname.c_str(), &(serverAddr.sin_addr));
+
+    // Send ERROR packet
+    ssize_t sentBytes = sendto(sock, errorBuffer, sizeof(errorBuffer), 0, (struct sockaddr *)&serverAddr, sizeof(serverAddr));
+    if (sentBytes == -1)
+    {
+        std::cerr << "Error: Failed to send ERROR." << std::endl;
+    }
+
+    std::cerr << "ERROR " << hostname << ":" << srcPort << ":" << dstPort << " " << errorCode << " \"" << errorMsg << "\"" << std::endl;
+}
+
 // Function to send WRQ (Write Request) packet with optional parameters (OACK)
-void sendWriteRequestWithOACK(int sock, const std::string &hostname, int port, const std::string &filepath, const std::string &mode, const std::string &options, const TFTPOparams &params)
+bool sendWriteRequest(int sock, const std::string &hostname, int port, const std::string &filepath, const std::string &mode, const std::string &options, const TFTPOparams &params)
 {
     // Create a buffer for the write request packet
     std::vector<uint8_t> requestBuffer;
@@ -66,38 +184,9 @@ void sendWriteRequestWithOACK(int sock, const std::string &hostname, int port, c
     if (sentBytes == -1)
     {
         std::cerr << "Error: Failed to send WRQ packet." << std::endl;
-        return;
+        return false;
     }
-
-    // Convert the requestBuffer to a string for printing
-    std::string requestString(requestBuffer.begin(), requestBuffer.end());
-
-    // Print the request packet contents
-    std::cerr << "Sent Write Request packet with content:" << std::endl;
-    for (size_t i = 0; i < requestString.length(); i++)
-    {
-        std::cerr << "0x" << std::dec << static_cast<int>(requestString[i]) << " ";
-    }
-    std::cerr << std::endl;
-}
-
-// Function to receive ACK (Acknowledgment) packet and capture the server's port
-
-std::string hexStringToCharString(const std::string &hexStr)
-{
-    std::string charStr;
-    for (size_t i = 0; i < hexStr.length(); i += 2)
-    {
-        // Extract two characters from the hex string
-        std::string hexPair = hexStr.substr(i, 2);
-
-        // Convert the hex pair to an integer
-        int hexValue = std::stoi(hexPair, nullptr, 16);
-
-        // Convert the integer to a char and append it to the result
-        charStr += static_cast<char>(hexValue);
-    }
-    return charStr;
+    return true;
 }
 
 bool receiveAck(int sock, uint16_t &receivedBlockID, int &serverPort, const TFTPOparams &params, std::map<std::string, std::string> &receivedOptions)
@@ -200,50 +289,6 @@ bool receiveAck(int sock, uint16_t &receivedBlockID, int &serverPort, const TFTP
 
         for (const auto &pair : recieved_options)
         {
-            // std::cerr << "Pair first: " << pair.first << std::endl;
-            // std::cerr << "Pair client first: "
-            //           << "blksize" << std::endl;
-
-            // std::cerr << "Pair secnd: " << pair.second << std::endl;
-            // std::cerr << "Pair client second: " << std::to_string(params.blksize) << std::endl;
-
-            // if (pair.first == "blksize")
-            // {
-            //     std::cerr << "blksize workie " << std::endl;
-
-            //     for (char c : pair.first)
-            //     {
-            //         // Convert the character to its hexadecimal representation
-            //         std::cout << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(c);
-            //     }
-            //     std::cerr << " " << std::endl;
-
-            //     for (char c : "blksize")
-            //     {
-            //         // Convert the character to its hexadecimal representation
-            //         std::cout << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(c);
-            //     }
-            //     std::cerr << " " << std::endl;
-            // }
-
-            // if (pair.second != std::to_string(params.blksize))
-            // {
-            //     std::cerr << "value do not workie " << std::endl;
-
-            //     for (char c : pair.second)
-            //     {
-            //         // Convert the character to its hexadecimal representation
-            //         std::cout << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(c);
-            //     }
-            //     std::cerr << " " << std::endl;
-
-            //     for (char c : std::to_string(params.blksize))
-            //     {
-            //         // Convert the character to its hexadecimal representation
-            //         std::cout << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(c);
-            //     }
-            //     std::cerr << " " << std::endl;
-            // }
 
             if (pair.first == "blksize" && (pair.second != std::to_string(params.blksize)))
             {
@@ -263,7 +308,7 @@ bool receiveAck(int sock, uint16_t &receivedBlockID, int &serverPort, const TFTP
 }
 
 // Function to send DATA packet
-void sendData(int sock, const std::string &hostname, int port, const std::string &data)
+bool sendData(int sock, const std::string &hostname, int port, const std::string &data)
 {
     // Increment the block ID for the next data block
     blockID++;
@@ -288,62 +333,16 @@ void sendData(int sock, const std::string &hostname, int port, const std::string
     if (sentBytes == -1)
     {
         std::cerr << "Error: Failed to send DATA." << std::endl;
+        return false;
     }
     std::cout << std::dec;
 
     std::cerr << "Sent DATA packet with size: " << dataBuffer.size() << " bytes, block ID: " << blockID << std::endl; // Print the size and block ID
-
-    // If you want to print the actual data being sent, you can do so here
-    // std::cerr << "DATA Content: " << std::string(dataBuffer.begin() + 4, dataBuffer.end()) << std::endl;
-}
-
-// Function to handle errors
-void handleError(int sock, const std::string &hostname, int srcPort, int dstPort, uint16_t errorCode, const std::string &errorMsg)
-{
-    // Create an ERROR packet
-    uint8_t errorBuffer[4 + errorMsg.length() + 1]; // +1 for null-terminated string
-    errorBuffer[0] = 0;                             // High byte of opcode (0 for ERROR)
-    errorBuffer[1] = 5;                             // Low byte of opcode (5 for ERROR)
-    errorBuffer[2] = (errorCode >> 8) & 0xFF;       // High byte of error code
-    errorBuffer[3] = errorCode & 0xFF;              // Low byte of error code
-
-    // Add the error message to the buffer
-    std::memcpy(errorBuffer + 4, errorMsg.c_str(), errorMsg.length());
-    errorBuffer[4 + errorMsg.length()] = '\0'; // Null-terminated string
-
-    // Create sockaddr_in structure for the remote server (serverAddr)
-    sockaddr_in serverAddr;
-    std::memset(&serverAddr, 0, sizeof(serverAddr));
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(dstPort);
-    inet_pton(AF_INET, hostname.c_str(), &(serverAddr.sin_addr));
-
-    // Send ERROR packet
-    ssize_t sentBytes = sendto(sock, errorBuffer, sizeof(errorBuffer), 0, (struct sockaddr *)&serverAddr, sizeof(serverAddr));
-    if (sentBytes == -1)
-    {
-        std::cerr << "Error: Failed to send ERROR." << std::endl;
-    }
-
-    std::cerr << "ERROR " << hostname << ":" << srcPort << ":" << dstPort << " " << errorCode << " \"" << errorMsg << "\"" << std::endl;
-}
-
-// Function to set socket timeout
-bool setSocketTimeout(int sock, int timeout)
-{
-    struct timeval tv;
-    tv.tv_sec = timeout;
-    tv.tv_usec = 0;
-    if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0)
-    {
-        std::cerr << "Error: Failed to set socket timeout." << std::endl;
-        return false;
-    }
     return true;
 }
 
 // Function to send a file to the server or upload from stdin
-void SendFile(int sock, const std::string &hostname, int port, const std::string &localFilePath, const std::string &remoteFilePath, std::string &mode, const std::string &options, const TFTPOparams &params)
+int SendFile(int sock, const std::string &hostname, int port, const std::string &localFilePath, const std::string &remoteFilePath, std::string &mode, const std::string &options, const TFTPOparams &params)
 {
     std::istream *inputStream;
     std::ifstream file;
@@ -354,37 +353,52 @@ void SendFile(int sock, const std::string &hostname, int port, const std::string
 
     std::cout << "Zadali jste: " << userInput << std::endl;
 
-    file.open(userInput, std::ios::binary);
+    file.open(remoteFilePath, std::ios::binary);
 
     if (!file)
     {
         std::cerr << "Error: Failed to open file for reading sendfile." << std::endl;
         close(sock); // Close the socket on error
-        return;
+        return 1;
     }
     inputStream = &file;
 
     // Determine the mode based on the file content
-    mode = determineMode(userInput);
+    mode = determineMode(remoteFilePath);
 
     const size_t maxDataSize = params.blksize; // Max data size in one DATA packet
     char buffer[maxDataSize];                  // Buffer for reading data from the file or stdin
 
     int serverPort = 0; // Variable to capture the server's port
 
-    // Send WRQ packet with optional parameters (OACK)
-    sendWriteRequestWithOACK(sock, hostname, port, remoteFilePath, mode, options, params);
+    int writeRequestRetries = 0;
+    bool wrqAckReceived = false;
+    setSocketTimeout(sock, params.timeout_max);
 
     std::map<std::string, std::string> receivedOptions;
-    std::cout << std::dec;
 
-    // Wait for an ACK or OACK response after WRQ and capture the server's port
-    if (!receiveAck(sock, blockID, serverPort, params, receivedOptions))
+    // Send WRQ packet with optional parameters (OACK) and retry up to 4 times if no ACK/OACK is received
+    while (!wrqAckReceived && writeRequestRetries < 4)
     {
-        std::cerr << "Error: Failed to receive ACK or OACK after WRQ." << std::endl;
-        handleError(sock, hostname, port, 0, 0, "Failed to receive ACK or OACK after WRQ");
+        if (!sendWriteRequest(sock, hostname, port, userInput, mode, options, params))
+        {
+            return 1;
+        }
+
+        wrqAckReceived = receiveAck(sock, blockID, serverPort, params, receivedOptions);
+
+        if (!wrqAckReceived)
+        {
+            std::cerr << "Warning: ACK not received after WRQ, retrying..." << std::endl;
+            writeRequestRetries++;
+        }
+    }
+
+    if (writeRequestRetries == 4)
+    {
+        std::cerr << "Error: Failed to receive ACK or OACK after multiple WRQ attempts. Exiting..." << std::endl;
         close(sock);
-        return;
+        return 1;
     }
 
     bool isOACK = (blockID == 0);
@@ -393,7 +407,7 @@ void SendFile(int sock, const std::string &hostname, int port, const std::string
     std::cerr << "Server provided port for data transfer: " << serverPort << std::endl; // Print the server's port
 
     bool transferComplete = false;
-    int max_retries = 2;
+    int max_retries = 4;
 
     while (!transferComplete)
     {
@@ -402,18 +416,11 @@ void SendFile(int sock, const std::string &hostname, int port, const std::string
 
         if (bytesRead > 0)
         {
-            if (option_timeout_used)
+
+            if (!sendData(sock, hostname, serverPort, std::string(buffer, bytesRead)))
             {
-                // Upravit timeout pro čekání na ACK na hodnotu params.timeout_max
-                setSocketTimeout(sock, params.timeout_max);
-            }
-
-            sendData(sock, hostname, serverPort, std::string(buffer, bytesRead)); // Odeslat data na server
-
-            // while (true)
-            // {
-            //     /* code */
-            // }
+                return 1;
+            }; // Odeslat data na server
 
             // Pokud klient nepřijme ACK v požadovaném čase, pokusí se znovu odeslat datový paket
             int numRetries = 0;
@@ -427,7 +434,10 @@ void SendFile(int sock, const std::string &hostname, int port, const std::string
                     // Pokud ACK nebyl přijat včas, pokusit se znovu odeslat datový paket
                     std::cerr << "Warning: ACK not received for block " << blockID << ", retrying..." << std::endl;
 
-                    sendData(sock, hostname, serverPort, std::string(buffer, bytesRead));
+                    if (!sendData(sock, hostname, serverPort, std::string(buffer, bytesRead)))
+                    {
+                        return 1;
+                    };
                     numRetries++;
                 }
             }
@@ -437,7 +447,7 @@ void SendFile(int sock, const std::string &hostname, int port, const std::string
                 // Datový paket nebyl potvrzen ACK ani po opakovaných pokusech, ukončit program
                 std::cerr << "Error: Data packet not acknowledged after multiple retries, exiting..." << std::endl;
                 close(sock);
-                return;
+                return 1;
             }
 
             if (bytesRead < maxDataSize) // If we read less than the max data size, we're done.
@@ -447,6 +457,8 @@ void SendFile(int sock, const std::string &hostname, int port, const std::string
         }
         else
         {
+            std::cerr << "Bytes read shit" << std::endl;
+
             // No more data to send
             transferComplete = true;
         }
@@ -469,28 +481,6 @@ void SendFile(int sock, const std::string &hostname, int port, const std::string
 //
 //
 //****************************************************************************************************************************
-
-bool isBinaryFormat(const std::string &filename)
-{
-    // Získej koncovku souboru z názvu
-    size_t dotPosition = filename.find_last_of('.');
-    if (dotPosition == std::string::npos)
-    {
-        // Pokud nemáme koncovku, nelze určit formát, takže použijeme octet mode
-        return true;
-    }
-
-    std::string fileExtension = filename.substr(dotPosition + 1);
-
-    // Převeď koncovku na malá písmena pro jednodušší porovnání
-    std::transform(fileExtension.begin(), fileExtension.end(), fileExtension.begin(), ::tolower);
-
-    // Definuj seznam koncovek, které budeme považovat za binární formáty
-    std::vector<std::string> binaryExtensions = {"bin", "jpg", "png", "exe"};
-
-    // Porovnej koncovku s seznamem binárních koncovek
-    return std::find(binaryExtensions.begin(), binaryExtensions.end(), fileExtension) != binaryExtensions.end();
-}
 
 // Function to send RRQ (Read Request) packet
 void sendReadRequest(int sock, const std::string &hostname, int port, const std::string &remoteFilePath, const std::string &mode, const std::string &options, const TFTPOparams &params)
@@ -690,15 +680,17 @@ bool sendAck(int sock, uint16_t blockID, const std::string &hostname, int server
 }
 
 // Modify the transfer_file function to receive a file from the server
-void receive_file(int sock, const std::string &hostname, int port, const std::string &localFilePath, const std::string &remoteFilePath, const std::string &mode, const std::string &options, const TFTPOparams &params)
+int receive_file(int sock, const std::string &hostname, int port, const std::string &localFilePath, const std::string &remoteFilePath, std::string &mode, const std::string &options, const TFTPOparams &params)
 {
+    mode = determineMode(remoteFilePath);
+
     std::ofstream outputFile(localFilePath, std::ios::binary | std::ios::out); // Open a local file to write the received data
 
     if (!outputFile.is_open())
     {
         std::cerr << "Error: Failed to open file for writing." << std::endl;
         close(sock); // Close the socket on error
-        return;
+        return 1;
     }
 
     std::cerr << "File opened" << std::endl;
@@ -736,7 +728,7 @@ void receive_file(int sock, const std::string &hostname, int port, const std::st
                 std::cerr << "Error: Failed to receive ACK or OACK after WRQ." << std::endl;
                 handleError(sock, hostname, port, 0, 0, "Failed to receive ACK or OACK after WRQ");
                 close(sock);
-                return;
+                return 1;
             }
 
             // Set the server's port and IP address in serverAddr
@@ -754,7 +746,7 @@ void receive_file(int sock, const std::string &hostname, int port, const std::st
                 close(sock);                   // Close the socket on error
                 outputFile.close();            // Close the output file
                 remove(localFilePath.c_str()); // Delete the partially downloaded file
-                return;
+                return 1;
             }
 
             // Receive a DATA packet and store the data in 'data' with block size option
@@ -764,7 +756,7 @@ void receive_file(int sock, const std::string &hostname, int port, const std::st
                 close(sock);                   // Close the socket on error
                 outputFile.close();            // Close the output file
                 remove(localFilePath.c_str()); // Delete the partially downloaded file
-                return;
+                return 1;
             }
         }
         else
@@ -777,7 +769,7 @@ void receive_file(int sock, const std::string &hostname, int port, const std::st
                 close(sock);                   // Close the socket on error
                 outputFile.close();            // Close the output file
                 remove(localFilePath.c_str()); // Delete the partially downloaded file
-                return;
+                return 1;
             }
         }
 
@@ -788,7 +780,7 @@ void receive_file(int sock, const std::string &hostname, int port, const std::st
             close(sock);                   // Close the socket on error
             outputFile.close();            // Close the output file
             remove(localFilePath.c_str()); // Delete the partially downloaded file
-            return;
+            return 1;
         }
 
         // Write the received data to the output file
@@ -798,7 +790,7 @@ void receive_file(int sock, const std::string &hostname, int port, const std::st
             close(sock);                   // Close the socket on error
             outputFile.close();            // Close the output file
             remove(localFilePath.c_str()); // Delete the partially downloaded file
-            return;
+            return 1;
         }
 
         // Increment the block ID for the next ACK
@@ -807,6 +799,7 @@ void receive_file(int sock, const std::string &hostname, int port, const std::st
         // If the received data block is less than the block size, it indicates the end of the transfer
         if (data.size() < params.blksize)
         {
+
             if (options_used == true)
             {
                 if (!sendAck(sock, blockID, hostname, serverPort, params))
@@ -815,7 +808,7 @@ void receive_file(int sock, const std::string &hostname, int port, const std::st
                     close(sock);                   // Close the socket on error
                     outputFile.close();            // Close the output file
                     remove(localFilePath.c_str()); // Delete the partially downloaded file
-                    return;
+                    return 1;
                 }
             }
             transferComplete = true;
@@ -831,112 +824,65 @@ void receive_file(int sock, const std::string &hostname, int port, const std::st
     std::cerr << "File download complete: " << localFilePath << std::endl;
 }
 
-bool isAscii(const std::string &fileName)
-{
-    // Zjistěte příponu souboru
-    size_t dotPos = fileName.find_last_of('.');
-    if (dotPos == std::string::npos)
-    {
-        std::cerr << "Invalid file name: " << fileName << std::endl;
-        return false; // Neplatný název souboru
-    }
-
-    std::string fileExtension = fileName.substr(dotPos + 1);
-
-    // Porovnejte příponu s podporovanými režimy TFTP
-    if (fileExtension == "txt" || fileExtension == "html" || fileExtension == "xml")
-    {
-        std::cerr << "file is ascii " << fileName << std::endl;
-
-        return true; // Textový režim ('netascii')
-    }
-    else
-    {
-        std::cerr << "file is octet " << fileName << std::endl;
-
-        return false; // Binární režim ('octet')
-    }
-}
-
-std::string determineMode(const std::string &filePath)
-{
-
-    if (isAscii(filePath))
-    {
-        return "netascii"; // Pokud jsou to ASCII data, použijte "netascii" režim
-    }
-    else
-    {
-        return "octet"; // Pokud jsou to binární data, použijte "octet" režim
-    }
-}
-
 bool parseTFTPParameters(const std::string &Oparamstring, TFTPOparams &Oparams)
 {
-    // Inicializace parametrů na výchozí hodnoty
-    Oparams.blksize = 512;      // Výchozí hodnota blksize
-    Oparams.timeout_min = 1;    // Výchozí hodnota timeout_min
-    Oparams.timeout_max = 1000; // Výchozí hodnota timeout_max
-    Oparams.transfersize = 0;   // Výchozí hodnota transfersize
 
     // Rozdělení řetězce parametrů na jednotlivé páry název=hodnota
     std::istringstream Oparamstream(Oparamstring);
     std::string paramPair;
-    while (std::getline(Oparamstream, paramPair, ','))
+
+    size_t equalPos = Oparamstring.find('=');
+    if (equalPos != std::string::npos)
     {
-        size_t equalPos = paramPair.find('=');
-        if (equalPos != std::string::npos)
+        std::string paramName = Oparamstring.substr(0, equalPos);
+        std::string paramValue = Oparamstring.substr(equalPos + 1);
+
+        if (paramName == "blksize")
         {
-            std::string paramName = paramPair.substr(0, equalPos);
-            std::string paramValue = paramPair.substr(equalPos + 1);
-
-            if (paramName == "blksize")
+            option_blksize_used = true;
+            int blksize = std::stoi(paramValue);
+            if (blksize >= 8 && blksize <= 65464) // Kontrola platného rozsahu blksize
             {
-                option_blksize_used = true;
-                int blksize = std::stoi(paramValue);
-                if (blksize >= 8 && blksize <= 65464) // Kontrola platného rozsahu blksize
-                {
-                    Oparams.blksize = blksize;
-                }
-                else
-                {
-                    std::cerr << "Chybná hodnota parametru blksize: " << blksize << std::endl;
-                    return false;
-                }
-            }
-            else if (paramName == "timeout")
-            {
-                option_timeout_used = true;
-
-                int maxTimeout = std::stoi(paramValue);
-                if (maxTimeout >= Oparams.timeout_min)
-                {
-                    Oparams.timeout_max = maxTimeout;
-                }
-                else
-                {
-                    std::cerr << "Chybná hodnota parametru timeout: " << maxTimeout << std::endl;
-                    return false;
-                }
-            }
-            else if (paramName == "transfersize")
-            {
-                int transfersize = std::stoi(paramValue);
-                if (transfersize >= 0)
-                {
-                    Oparams.transfersize = transfersize;
-                }
-                else
-                {
-                    std::cerr << "Chybná hodnota parametru transfersize: " << transfersize << std::endl;
-                    return false;
-                }
+                Oparams.blksize = blksize;
             }
             else
             {
-                std::cerr << "Neznámý parametr: " << paramName << std::endl;
+                std::cerr << "Chybná hodnota parametru blksize: " << blksize << std::endl;
                 return false;
             }
+        }
+        else if (paramName == "timeout")
+        {
+            option_timeout_used = true;
+
+            int maxTimeout = std::stoi(paramValue);
+            if (maxTimeout >= 0)
+            {
+                Oparams.timeout_max = maxTimeout;
+            }
+            else
+            {
+                std::cerr << "Chybná hodnota parametru timeout: " << maxTimeout << std::endl;
+                return false;
+            }
+        }
+        else if (paramName == "transfersize")
+        {
+            int transfersize = std::stoi(paramValue);
+            if (transfersize >= 0)
+            {
+                Oparams.transfersize = transfersize;
+            }
+            else
+            {
+                std::cerr << "Chybná hodnota parametru transfersize: " << transfersize << std::endl;
+                return false;
+            }
+        }
+        else
+        {
+            std::cerr << "Neznámý parametr: " << paramName << std::endl;
+            return false;
         }
     }
 
@@ -950,6 +896,13 @@ int main(int argc, char *argv[])
     std::string localFilePath;
     std::string remoteFilePath;
     std::string options; // Optional parameters for OACK
+
+    TFTPOparams Oparams;
+
+    // Inicializace parametrů na výchozí hodnoty
+    Oparams.blksize = 512;       // Výchozí hodnota blksize
+    Oparams.timeout_max = 5;     // Výchozí hodnota timeout_max
+    Oparams.transfersize = 1000; // Výchozí hodnota transfersize
 
     // Process command-line arguments, including optional parameters
     for (int i = 1; i < argc; ++i)
@@ -965,16 +918,19 @@ int main(int argc, char *argv[])
         }
         else if (arg == "-f" && i + 1 < argc)
         {
-            localFilePath = argv[++i];
+            remoteFilePath = argv[++i];
         }
         else if (arg == "-t" && i + 1 < argc)
         {
-            remoteFilePath = argv[++i];
+            localFilePath = argv[++i];
         }
-        else if (arg == "-o" && i + 1 < argc)
+        else if (arg == "--option" && i + 1 < argc)
         {
-            options = argv[++i];
-            options_used = true;
+            if (!parseTFTPParameters(argv[++i], Oparams))
+            {
+                std::cerr << "Chyba při parsování parametrů." << std::endl;
+                return 1;
+            }
         }
     }
 
@@ -995,20 +951,6 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    TFTPOparams Oparams;
-
-    if (parseTFTPParameters(options, Oparams))
-    {
-        std::cout << "blksize: " << Oparams.blksize << std::endl;
-        std::cout << "timeout: " << Oparams.timeout_max << std::endl;
-        std::cout << "transfersize: " << Oparams.transfersize << std::endl;
-    }
-    else
-    {
-        std::cerr << "Chyba při parsování parametrů." << std::endl;
-        return 1;
-    }
-
     // Set up the sockaddr_in structure for the server
     sockaddr_in serverAddr;
     std::memset(&serverAddr, 0, sizeof(serverAddr));
@@ -1018,12 +960,18 @@ int main(int argc, char *argv[])
 
     if (localFilePath.empty())
     {
-        SendFile(sock, hostname, port, localFilePath, remoteFilePath, mode, options, Oparams);
+        if (SendFile(sock, hostname, port, localFilePath, remoteFilePath, mode, options, Oparams) == 1)
+        {
+            return 1;
+        };
     }
     else if (!localFilePath.empty() && !remoteFilePath.empty())
     {
         // Receive a file from the server
-        receive_file(sock, hostname, port, localFilePath, remoteFilePath, mode, options, Oparams);
+        if (receive_file(sock, hostname, port, localFilePath, remoteFilePath, mode, options, Oparams) == 1)
+        {
+            return 1;
+        };
     }
     else
     {
@@ -1031,8 +979,6 @@ int main(int argc, char *argv[])
         close(sock);
         return 1;
     }
-
-    // Send the file to the server or upload from stdin
 
     return 0;
 }

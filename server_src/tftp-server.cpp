@@ -173,7 +173,7 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filena
                 continue;
             }
 
-            if (receiveAck(sockfd, 0, clientAddr, params.timeout)) // Add timeout to receiveAck
+            if (receiveAck(sockfd, 0, clientAddr, params.timeout))
             {
                 ackReceived = true;
                 break;
@@ -592,7 +592,6 @@ void runTFTPServer(int port)
 
         if (opcode == RRQ)
         {
-            // Print a message when RRQ is received
 
             // todo přidání víc options
 
