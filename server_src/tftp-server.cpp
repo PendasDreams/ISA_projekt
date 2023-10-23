@@ -16,7 +16,6 @@
 //      check RFC
 //      ověřit na referenčním stroji
 //      dokumentace
-//      před odevzdanim port 69 default
 
 bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr, int timeout);
 
@@ -744,7 +743,7 @@ int main(int argc, char *argv[])
 {
     // std::signal(SIGINT, sigintHandler);
 
-    int port = 1070;          // Default TFTP port
+    int port = 69;            // Default TFTP port
     std::string root_dirpath; // Directory path
 
     for (int i = 1; i < argc; i++)

@@ -9,22 +9,32 @@ NC='\033[0m' # No Color
 SERVER="127.0.0.1"
 PORT=1070
 
-# Directory paths for downloading
-SOURCE_DIR_DOWNLOAD="download"
-DEST_DIR_DOWNLOAD="download_finish"
+# Directory paths for downloading from server to client
+ROOT_DIRPATH_SERVER="root_dirpath_server" # Assuming this is the server's root directory.
+CLIENT_SERVER_PATH="root_dirpath_client"   # Client directory to which files are downloaded.
 
-# Directory paths for uploading
-SOURCE_DIR_UPLOAD="upload"
-DEST_DIR_UPLOAD="upload_finish"
 
 # Arrays to keep track of tests
 PASSED_TESTS=()
 FAILED_TESTS=()
 
 
+compare_directories() {
+    echo -e "\nComparing directories $1 and $2"
+    diff -r $1 $2
+    DIFF_STATUS=$?
+    if [ $DIFF_STATUS -ne 0 ]; then
+        echo -e "${RED}The contents of $1 and $2 differ!${NC}"
+        FAILED_TESTS+=("Directory comparison of $1 and $2")
+    else
+        echo -e "${GREEN}The contents of $1 and $2 are identical!${NC}"
+        PASSED_TESTS+=("Directory comparison of $1 and $2")
+    fi
+}
+
 
 # Check if directories exist
-for DIR in $SOURCE_DIR_DOWNLOAD $DEST_DIR_DOWNLOAD $SOURCE_DIR_UPLOAD $DEST_DIR_UPLOAD; do
+for DIR in $ROOT_DIRPATH_SERVER $CLIENT_SERVER_PATH; do
     if [[ ! -d $DIR ]]; then
         echo -e "${RED}Directory $DIR doesn't exist!${NC}"
         exit 1
@@ -36,110 +46,50 @@ run_tftp_client() {
     ./tftp-client $@
 }
 
-# echo "Processing directory: $SOURCE_DIR_DOWNLOAD"
-# # Iterate over each file in the download directory
-# for LOCAL_FILE in $SOURCE_DIR_DOWNLOAD/*; do
-#     FILE_NAME=$(basename $LOCAL_FILE)
-#     REMOTE_FILE="$DEST_DIR_DOWNLOAD/$FILE_NAME"
-#     echo -n "Testing download of $FILE_NAME without any optional parameters: "
-#     run_tftp_client -h $SERVER -p $PORT -f $LOCAL_FILE -t $REMOTE_FILE
-#     # ... [zbytek kódu zůstává stejný]
-# done
 
-# echo -e "\nProcessing directory: $SOURCE_DIR_UPLOAD"
-# # Iterate over each file in the upload directory
-# for LOCAL_FILE in $SOURCE_DIR_UPLOAD/*; do
-#     FILE_NAME=$(basename $LOCAL_FILE)
-#     REMOTE_FILE="$DEST_DIR_UPLOAD/$FILE_NAME"
-#     echo -n "Testing upload of $FILE_NAME: "
-#     # Zde upravujeme přímý vstup do tftp-client
-#     echo "Running: echo $REMOTE_FILE | ./tftp-client -h $SERVER -p $PORT -f $LOCAL_FILE -t $REMOTE_FILE"
-#     echo $REMOTE_FILE | ./tftp-client -h $SERVER -p $PORT -f $LOCAL_FILE -t $REMOTE_FILE
-#     # ... [zbytek kódu zůstává stejný]
-# done
 
-# Testování s parametrem --option
-echo -e "\nProcessing directory with options: $SOURCE_DIR_DOWNLOAD"
-for LOCAL_FILE in $SOURCE_DIR_DOWNLOAD/*; do
-    FILE_NAME=$(basename $LOCAL_FILE)
-    REMOTE_FILE="$DEST_DIR_DOWNLOAD/$FILE_NAME"
-    echo -n "Testing download of $FILE_NAME with blksize option: "
-    run_tftp_client -h $SERVER -p $PORT -f $LOCAL_FILE -t $REMOTE_FILE --option blksize=8000
+# Download files from ROOT_DIRPATH_SERVER to CLIENT_SERVER_PATH
+echo -e "\nProcessing directory: $ROOT_DIRPATH_SERVER"
+for SERVER_FILE in $ROOT_DIRPATH_SERVER/*; do
+    FILE_NAME=$(basename $SERVER_FILE)
+    CLIENT_FILE="$CLIENT_SERVER_PATH/$FILE_NAME"
+    echo -n "Testing download of $FILE_NAME from server to client: "
+    run_tftp_client -h $SERVER -p $PORT -f $FILE_NAME -t $CLIENT_FILE
+    # Check success and store results
     if [[ $? -ne 0 ]]; then
         echo -e "${RED}FAILED${NC}"
-        FAILED_TESTS+=("$FILE_NAME download with blksize")
+        FAILED_TESTS+=("$FILE_NAME download from server")
     else
         echo -e "${GREEN}PASSED${NC}"
-        PASSED_TESTS+=("$FILE_NAME download with blksize")
-            sleep 0.2  # Pauza 0.2 sekundy mezi testy
-
+        PASSED_TESTS+=("$FILE_NAME download from server")
+        sleep 0.2  # Pause 0.2 seconds between tests
     fi
-
-    echo -n "Testing download of $FILE_NAME with timeout option: "
-    run_tftp_client -h $SERVER -p $PORT -f $LOCAL_FILE -t $REMOTE_FILE --option timeout=5
-    if [[ $? -ne 0 ]]; then
-        echo -e "${RED}FAILED${NC}"
-        FAILED_TESTS+=("$FILE_NAME download with timeout")
-    else
-        echo -e "${GREEN}PASSED${NC}"
-        PASSED_TESTS+=("$FILE_NAME download with timeout")
-    fi
-        sleep 0.2  # Pauza 0.2 sekundy mezi testy
-
 done
 
-echo -e "\nProcessing directory with options: $SOURCE_DIR_UPLOAD"
-for LOCAL_FILE in $SOURCE_DIR_UPLOAD/*; do
-    FILE_NAME=$(basename $LOCAL_FILE)
-    REMOTE_FILE="$DEST_DIR_UPLOAD/$FILE_NAME"
-    echo -n "Testing upload of $FILE_NAME with blksize option: "
-    echo "Running: echo $REMOTE_FILE | ./tftp-client -h $SERVER -p $PORT -f $LOCAL_FILE -t $REMOTE_FILE --option blksize=8000"
-    echo $REMOTE_FILE | ./tftp-client -h $SERVER -p $PORT -f $LOCAL_FILE -t $REMOTE_FILE --option blksize=8000
-    if [[ $? -ne 0 ]]; then
-        echo -e "${RED}FAILED${NC}"
-        FAILED_TESTS+=("$FILE_NAME upload with blksize")
-    else
-        echo -e "${GREEN}PASSED${NC}"
-        PASSED_TESTS+=("$FILE_NAME upload with blksize")
-    fi
+compare_directories $ROOT_DIRPATH_SERVER $CLIENT_SERVER_PATH
 
-    echo -n "Testing upload of $FILE_NAME with timeout option: "
-    echo "Running: echo $REMOTE_FILE | ./tftp-client -h $SERVER -p $PORT -f $LOCAL_FILE -t $REMOTE_FILE --option timeout=5"
-    echo $REMOTE_FILE | ./tftp-client -h $SERVER -p $PORT -f $LOCAL_FILE -t $REMOTE_FILE --option timeout=5
+
+# Upload files from CLIENT_SERVER_PATH back to ROOT_DIRPATH_SERVER
+echo -e "\nProcessing directory: $CLIENT_SERVER_PATH"
+for CLIENT_FILE in $CLIENT_SERVER_PATH/*; do
+    FILE_NAME=$(basename $CLIENT_FILE)
+    echo -n "Testing upload of $FILE_NAME from client to server: "
+    echo "$CLIENT_FILE" | run_tftp_client -h $SERVER -p $PORT -t $FILE_NAME
+    # Check success and store results
     if [[ $? -ne 0 ]]; then
         echo -e "${RED}FAILED${NC}"
-        FAILED_TESTS+=("$FILE_NAME upload with timeout")
+        FAILED_TESTS+=("$FILE_NAME upload to server")
     else
         echo -e "${GREEN}PASSED${NC}"
-        PASSED_TESTS+=("$FILE_NAME upload with timeout")
+        PASSED_TESTS+=("$FILE_NAME upload to server")
+        sleep 0.2  # Pause 0.2 seconds between tests
     fi
 done
 
 
 
-# Compare the contents of the download directories
-echo -e "\nComparing directories $SOURCE_DIR_DOWNLOAD and $DEST_DIR_DOWNLOAD"
-diff -r $SOURCE_DIR_DOWNLOAD $DEST_DIR_DOWNLOAD
-DIFF_STATUS=$?
-if [ $DIFF_STATUS -ne 0 ]; then
-    echo -e "${RED}The contents of $SOURCE_DIR_DOWNLOAD and $DEST_DIR_DOWNLOAD differ!${NC}"
-    FAILED_TESTS+=("Download directory comparison")
-else
-    echo -e "${GREEN}The contents of $SOURCE_DIR_DOWNLOAD and $DEST_DIR_DOWNLOAD are identical!${NC}"
-    PASSED_TESTS+=("Download directory comparison")
-fi
+compare_directories $ROOT_DIRPATH_SERVER $CLIENT_SERVER_PATH
 
-# Compare the contents of the upload directories
-echo -e "\nComparing directories $SOURCE_DIR_UPLOAD and $DEST_DIR_UPLOAD"
-diff -r $SOURCE_DIR_UPLOAD $DEST_DIR_UPLOAD
-DIFF_STATUS=$?
-if [ $DIFF_STATUS -ne 0 ]; then
-    echo -e "${RED}The contents of $SOURCE_DIR_UPLOAD and $DEST_DIR_UPLOAD differ!${NC}"
-    FAILED_TESTS+=("Upload directory comparison")
-else
-    echo -e "${GREEN}The contents of $SOURCE_DIR_UPLOAD and $DEST_DIR_UPLOAD are identical!${NC}"
-    PASSED_TESTS+=("Upload directory comparison")
-fi
 
 # Print summary
 echo -e "\n${GREEN}PASSED TESTS:${NC}"

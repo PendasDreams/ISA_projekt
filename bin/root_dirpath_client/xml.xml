@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root>
+    <element1 attribute="value">
+        Text for element 1
+    </element1>
+    <element2>
+        Text for element 2
+    </element2>
+    <element3>
+        <childElement attribute="childValue">
+            Text for child element of element 3
+        </childElement>
+    </element3>
+</root>
