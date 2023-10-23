@@ -154,7 +154,7 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filena
 
     file.open(filename, std::ios::binary);
 
-        if (!file)
+    if (!file)
     {
         std::cerr << "we are here fucked filename" << std::endl;
         sendError(sockfd, ERROR_FILE_NOT_FOUND, "File not found", clientAddr);

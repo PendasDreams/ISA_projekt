@@ -360,12 +360,12 @@ int SendFile(int sock, const std::string &hostname, int port, const std::string 
     std::ifstream file;
 
     std::string userInput;
-    // std::cout << "Zadejte řádek textu: ";
+    std::cout << "Zadejte řádek textu: ";
     std::getline(std::cin, userInput);
 
-    // std::cout << "Zadali jste: " << userInput << std::endl;
+    std::cout << "Zadali jste: " << userInput << std::endl;
 
-    file.open(remoteFilePath, std::ios::binary);
+    file.open(userInput, std::ios::binary);
 
     if (!file)
     {
@@ -392,7 +392,7 @@ int SendFile(int sock, const std::string &hostname, int port, const std::string 
     // Send WRQ packet with optional parameters (OACK) and retry up to 4 times if no ACK/OACK is received
     while (!wrqAckReceived && writeRequestRetries < 4)
     {
-        if (!sendWriteRequest(sock, hostname, port, userInput, mode, options, params))
+        if (!sendWriteRequest(sock, hostname, port, localFilePath, mode, options, params))
         {
             return 1;
         }
@@ -416,7 +416,7 @@ int SendFile(int sock, const std::string &hostname, int port, const std::string 
     bool isOACK = (blockID == 0);
 
     std::cerr << "Received " << (isOACK ? "OACK" : "ACK") << " after WRQ. Starting data transfer." << std::endl;
-    // std::cerr << "Server provided port for data transfer: " << serverPort << std::endl; // Print the server's port
+    std::cerr << "Server provided port for data transfer: " << serverPort << std::endl; // Print the server's port
 
     bool transferComplete = false;
     int max_retries = 4;
@@ -960,7 +960,7 @@ int main(int argc, char *argv[])
         }
     }
 
-    if (hostname.empty() || remoteFilePath.empty())
+    if (hostname.empty() || localFilePath.empty())
     {
         std::cerr << "Usage: tftp-client -h hostname -f [filepath] -t dest_filepath [-p port]" << std::endl;
         return 1;
@@ -984,7 +984,7 @@ int main(int argc, char *argv[])
     serverAddr.sin_port = htons(port);
     inet_pton(AF_INET, hostname.c_str(), &(serverAddr.sin_addr));
 
-    if (localFilePath.empty())
+    if (remoteFilePath.empty())
     {
         if (SendFile(sock, hostname, port, localFilePath, remoteFilePath, mode, options, Oparams) == 1)
         {
