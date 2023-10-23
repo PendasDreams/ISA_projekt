@@ -11,7 +11,6 @@
 
 // TODO dodělat timeout option
 //      Přidělat size option
-//      dodělat výběr portu u serveru
 //      ověřit chybový stavy
 //      code review
 //      check RFC
