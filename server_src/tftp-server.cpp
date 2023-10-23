@@ -537,12 +537,18 @@ bool hasOptions(TFTPPacket &requestPacket, std::string &filename, std::string &m
 }
 
 // Main TFTP server function
-void runTFTPServer(int port)
+void runTFTPServer(int port, const std::string &root_dirpath)
 {
     int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     if (sockfd < 0)
     {
         std::cerr << "Error creating socket" << std::endl;
+        return;
+    }
+
+    if (chdir(root_dirpath.c_str()) != 0)
+    {
+        std::cerr << "Error: Failed to change to root directory: " << root_dirpath << std::endl;
         return;
     }
 
@@ -769,6 +775,6 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    runTFTPServer(port);
+    runTFTPServer(port, root_dirpath);
     return 0;
 }
