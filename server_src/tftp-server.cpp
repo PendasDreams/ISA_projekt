@@ -6,8 +6,18 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <map>
-#include <iomanip> // Pro std::setw a std::setfill
+#include <iomanip>
 #include <csignal>
+
+// TODO dodělat timeout option
+//      Přidělat size option
+//      dodělat výběr portu u serveru
+//      ověřit chybový stavy
+//      code review
+//      check RFC
+//      ověřit na referenčním stroji
+//      dokumentace
+//      před odevzdanim port 69 default
 
 bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr, int timeout);
 
@@ -59,7 +69,6 @@ void sendError(int sockfd, uint16_t errorCode, const std::string &errorMsg, sock
 
 bool sendDataPacket(int sockfd, sockaddr_in &clientAddr, uint16_t blockNum, const char *data, size_t dataSize, uint16_t blockSize)
 {
-    std::cerr << "Send data packet " << std::endl;
 
     uint16_t opcode = htons(DATA);
     uint16_t blockNumNetwork = htons(blockNum);
@@ -91,7 +100,6 @@ bool sendDataPacket(int sockfd, sockaddr_in &clientAddr, uint16_t blockNum, cons
 // Function to send an OACK packet
 bool sendOACK(int sockfd, sockaddr_in &clientAddr, std::map<std::string, int> &options_map, TFTPOparams &params)
 {
-    std::cerr << "Sending OACK packet" << std::endl;
 
     std::vector<uint8_t> oackBuffer;
 
@@ -111,10 +119,6 @@ bool sendOACK(int sockfd, sockaddr_in &clientAddr, std::map<std::string, int> &o
         oackBuffer.insert(oackBuffer.end(), blockSizeStr.begin(), blockSizeStr.end());
         oackBuffer.push_back('\0'); // Přidej nulový znak za hodnotou
     }
-    else
-    {
-        std::cout << "\"blksize\" not found in the map." << std::endl;
-    }
 
     // Přidej "timeout" option, pokud je k dispozici v options_map
     auto timeoutIt = options_map.find("timeout");
@@ -127,10 +131,6 @@ bool sendOACK(int sockfd, sockaddr_in &clientAddr, std::map<std::string, int> &o
         std::string timeoutStr = std::to_string(params.timeout);
         oackBuffer.insert(oackBuffer.end(), timeoutStr.begin(), timeoutStr.end());
         oackBuffer.push_back('\0'); // Přidej nulový znak za hodnotou
-    }
-    else
-    {
-        std::cout << "\"timeout\" not found in the map." << std::endl;
     }
 
     // Po dokončení vytvoření vektoru můžete poslat OACK packet
@@ -149,19 +149,15 @@ bool sendOACK(int sockfd, sockaddr_in &clientAddr, std::map<std::string, int> &o
 // Function to send a file in DATA packets
 bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filename, std::map<std::string, int> &options_map, TFTPOparams &params)
 {
-    std::cerr << "we are here fucked filename" << std::endl;
     std::ifstream file;
 
     file.open(filename, std::ios::binary);
 
     if (!file)
     {
-        std::cerr << "we are here fucked filename" << std::endl;
         sendError(sockfd, ERROR_FILE_NOT_FOUND, "File not found", clientAddr);
         return false;
     }
-
-    std::cerr << "Sending file" << std::endl;
 
     // If "blksize" option is found in the map, use the specified block size
     if (blocksizeOptionUsed || timeoutOptionUsed)
@@ -307,7 +303,11 @@ bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr, 
 
             if (blockNum == expectedBlockNum)
             {
-                std::cerr << "Received an ACK packet" << std::endl;
+                std::cerr << "ACK "
+                          << inet_ntoa(clientAddr.sin_addr) << ":"
+                          << ntohs(clientAddr.sin_port) << " "
+                          << blockNum
+                          << std::endl;
                 return true;
             }
             else if (blockNum < expectedBlockNum)
@@ -331,7 +331,7 @@ bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr, 
     }
 }
 
-bool receiveDataPacket(int sockfd, sockaddr_in &clientAddr, uint16_t expectedBlockNum, std::ofstream &file, TFTPOparams &params)
+bool receiveDataPacket(int sockfd, sockaddr_in &clientAddr, sockaddr_in &serverAddr, uint16_t expectedBlockNum, std::ofstream &file, TFTPOparams &params)
 {
     std::vector<uint8_t> dataPacket;
     dataPacket.clear();
@@ -393,7 +393,12 @@ bool receiveDataPacket(int sockfd, sockaddr_in &clientAddr, uint16_t expectedBlo
                 lastblockfromoutside = true;
             }
 
-            std::cout << "Received DATA packet for block " << blockNum << ", Data Size: " << dataSize << " bytes." << std::endl;
+            std::cout << "DATA "
+                      << inet_ntoa(clientAddr.sin_addr) << ":"
+                      << ntohs(clientAddr.sin_port) << ":"
+                      << ntohs(serverAddr.sin_port) << " "
+                      << blockNum
+                      << std::endl;
 
             return true;
         }
@@ -517,24 +522,14 @@ bool hasOptions(TFTPPacket &requestPacket, std::string &filename, std::string &m
     if (blksizeIt != options_map.end())
     {
         params.blksize = blksizeIt->second; // Read the value from the map
-        std::cout << "Value for \"blksize\" is " << params.blksize << std::endl;
         blocksizeOptionUsed = true;
-    }
-    else
-    {
-        std::cout << "\"blksize\" not found in the map." << std::endl;
     }
 
     // If "timeout" option is found in the map, use the specified timeout
     if (timeoutIt != options_map.end())
     {
         params.timeout = timeoutIt->second; // Read the value from the map
-        std::cout << "Value for \"timeout\" is " << params.timeout << std::endl;
         timeoutOptionUsed = true;
-    }
-    else
-    {
-        std::cout << "\"timeout\" not found in the map." << std::endl;
     }
 
     // Options processed successfully
@@ -587,7 +582,6 @@ void runTFTPServer(int port)
         std::map<std::string, int> options_map;
 
         ssize_t bytesReceived = recvfrom(sockfd, &requestPacket, sizeof(requestPacket), 0, (struct sockaddr *)&clientAddr, &clientAddrLen);
-        std::cerr << "received shit" << std::endl;
 
         if (bytesReceived < 0)
         {
@@ -599,19 +593,24 @@ void runTFTPServer(int port)
         std::string filename;
         std::string mode;
 
+        hasOptions(requestPacket, filename, mode, options_map, params);
+
+        std::string optionsString = "";
+        for (const auto &pair : options_map)
+        {
+            optionsString += pair.first + "=" + std::to_string(pair.second) + " ";
+        }
+
         if (opcode == RRQ)
         {
 
-            // todo přidání víc options
-
-            if (hasOptions(requestPacket, filename, mode, options_map, params))
-            {
-                std::cout << "Option included." << std::endl;
-            }
-            else
-            {
-                std::cout << "No options included in the RRQ packet." << std::endl;
-            }
+            std::cout << "RRQ "
+                      << inet_ntoa(clientAddr.sin_addr) << ":"
+                      << ntohs(clientAddr.sin_port) << " \""
+                      << filename << "\" "
+                      << mode << " "
+                      << optionsString
+                      << std::endl;
 
             if (!sendFileData(sockfd, clientAddr, filename, options_map, params))
             {
@@ -620,16 +619,14 @@ void runTFTPServer(int port)
         }
         else if (opcode == WRQ)
         {
-            if (hasOptions(requestPacket, filename, mode, options_map, params))
-            {
-                std::cout << "Option included." << std::endl;
-            }
-            else
-            {
-                std::cout << "No options included in the RRQ packet." << std::endl;
-            }
 
-            std::cout << "Received WRQ for file: " << filename << " from client." << std::endl;
+            std::cout << "WRQ "
+                      << inet_ntoa(clientAddr.sin_addr) << ":"
+                      << ntohs(clientAddr.sin_port) << " \""
+                      << filename << "\" "
+                      << mode << " "
+                      << optionsString
+                      << std::endl;
 
             std::ofstream file(filename, std::ios::binary);
 
@@ -669,7 +666,7 @@ void runTFTPServer(int port)
 
                     while (retries < maxRetries)
                     {
-                        if (receiveDataPacket(sockfd, clientAddr, blockNum, file, params))
+                        if (receiveDataPacket(sockfd, clientAddr, serverAddr, blockNum, file, params))
                         {
                             dataPacketReceived = true;
                             break;
@@ -738,11 +735,40 @@ void sigintHandler(int signal)
     std::exit(0); // Terminate the program
 }
 
-int main()
+int main(int argc, char *argv[])
 {
     // std::signal(SIGINT, sigintHandler);
 
-    int port = 1070; // Default TFTP port
+    int port = 1070;          // Default TFTP port
+    std::string root_dirpath; // Directory path
+
+    for (int i = 1; i < argc; i++)
+    {
+        if (strcmp(argv[i], "-p") == 0)
+        {
+            if (i + 1 < argc)
+            {
+                port = std::atoi(argv[i + 1]);
+                i++; // Skip the next argument
+            }
+            else
+            {
+                std::cerr << "Error: Missing value for '-p' option" << std::endl;
+                return 1;
+            }
+        }
+        else
+        {
+            root_dirpath = argv[i];
+        }
+    }
+
+    if (root_dirpath.empty())
+    {
+        std::cerr << "Error: root_dirpath must be specified" << std::endl;
+        return 1;
+    }
+
     runTFTPServer(port);
     return 0;
 }

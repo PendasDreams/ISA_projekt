@@ -13,7 +13,7 @@ bool isAscii(const std::string &fileName)
     size_t dotPos = fileName.find_last_of('.');
     if (dotPos == std::string::npos)
     {
-        std::cerr << "Invalid file name: " << fileName << std::endl;
+        // std::cerr << "Invalid file name: " << fileName << std::endl;
         return false; // Neplatný název souboru
     }
 
@@ -190,9 +190,17 @@ bool sendWriteRequest(int sock, const std::string &hostname, int port, const std
     std::cerr << std::endl;
 
     std::cerr << "WRQ " << hostname << ":" << port << " \"" << filepath << "\" " << mode;
-    if (!options.empty())
+    if (option_timeout_used == true || option_blksize_used == true)
     {
-        std::cerr << options;
+
+        if (option_timeout_used == true)
+        {
+            std::cerr << " timeout=" << params.timeout_max;
+        }
+        if (option_blksize_used == true)
+        {
+            std::cerr << " blksize=" << params.blksize;
+        }
     }
     std::cerr << std::endl;
     return true;
@@ -248,12 +256,9 @@ bool receiveAck(int sock, uint16_t &receivedBlockID, int &serverPort, const TFTP
             std::string option;
             std::string value;
 
-            std::cerr << "option read:" << std::endl;
-
             // Read option until null terminator
             while (pos < receivedBytes && packetBuffer[pos] != 0)
             {
-                std::cerr << static_cast<char>(packetBuffer[pos]);
                 option += (packetBuffer[pos]);
                 pos++;
             }
@@ -261,39 +266,18 @@ bool receiveAck(int sock, uint16_t &receivedBlockID, int &serverPort, const TFTP
             // Skip null terminator
             pos++;
 
-            std::cerr << " " << std::endl;
-
-            std::cerr << "value read:" << std::endl;
-
             // Read value until null terminator
             while (pos < receivedBytes && packetBuffer[pos] != 0)
             {
-                std::cerr << static_cast<char>(packetBuffer[pos]);
                 value += packetBuffer[pos];
                 pos++;
             }
-            std::cerr << " " << std::endl;
 
             // Skip null terminator
             pos++;
 
-            option.erase(0, 1); // Erase the first character
-
-            std::cerr << "option: " << option << std::endl;
-            std::cerr << "value from server: " << value << std::endl;
-            std::cerr << "value from client: " << std::to_string(params.blksize) << std::endl;
-
             // Store option and value in the receivedOptions map
             recieved_options[option] = value;
-
-            std::string stringlenght = "blksize";
-            int size = stringlenght.size();
-
-            std::string stringlenght_recieved = option;
-            int size_recieved = stringlenght_recieved.size();
-
-            std::cerr << "sizeof blksize: " << size << std::endl;
-            std::cerr << "sizeof recieved blksize: " << size_recieved << std::endl;
         }
 
         for (const auto &pair : recieved_options)
@@ -301,9 +285,16 @@ bool receiveAck(int sock, uint16_t &receivedBlockID, int &serverPort, const TFTP
 
             if (pair.first == "blksize" && (pair.second != std::to_string(params.blksize)))
             {
-                std::cerr << "Error: Received blksize option does not match the requested value: " << pair.second << " and " << std::to_string(params.blksize) << std::endl;
+                std::cerr << "Error: Received blksize option does not match the requested value." << std::endl;
                 std::cerr << "Error: Requested value from server: " << pair.second << std::endl;
                 std::cerr << "Error: Requested value from client: " << std::to_string(params.blksize) << std::endl;
+                return false;
+            }
+            else if (pair.first == "timeout" && (pair.second != std::to_string(params.timeout_max)))
+            {
+                std::cerr << "Error: Received timeout option does not match the requested value." << std::endl;
+                std::cerr << "Error: Requested value from server: " << pair.second << std::endl;
+                std::cerr << "Error: Requested value from client: " << std::to_string(params.timeout_max) << std::endl;
                 return false;
             }
         }
@@ -311,9 +302,20 @@ bool receiveAck(int sock, uint16_t &receivedBlockID, int &serverPort, const TFTP
         // You can similarly check other options as needed
     }
 
-    // std::cerr << "DATA " << senderAddr << ":" << serverPort << ":" << ntohs(serverAddr.sin_port) << " " << receivedBlockID << std::endl;
+    std::cerr << (opcode == 4 ? "ACK" : "OACK") << " " << inet_ntoa(senderAddr.sin_addr) << ":" << ntohs(senderAddr.sin_port);
 
-    std::cerr << (opcode == 4 ? "ACK" : "OACK") << " " << inet_ntoa(senderAddr.sin_addr) << ":" << ntohs(senderAddr.sin_port) << " " << receivedBlockID << std::endl;
+    if (opcode == 6)
+    {
+        for (const auto &pair : recieved_options)
+        {
+            std::cerr << " " << pair.first << "=" << pair.second;
+        }
+        std::cerr << std::endl;
+    }
+    else
+    {
+        std::cerr << std::endl;
+    }
 
     return true;
 }
@@ -414,9 +416,6 @@ int SendFile(int sock, const std::string &hostname, int port, const std::string 
     }
 
     bool isOACK = (blockID == 0);
-
-    std::cerr << "Received " << (isOACK ? "OACK" : "ACK") << " after WRQ. Starting data transfer." << std::endl;
-    std::cerr << "Server provided port for data transfer: " << serverPort << std::endl; // Print the server's port
 
     bool transferComplete = false;
     int max_retries = 4;
@@ -554,12 +553,18 @@ void sendReadRequest(int sock, const std::string &hostname, int port, const std:
         std::cerr << "Error: Failed to send RRQ packet." << std::endl;
     }
 
-    std::cerr << std::endl;
-
     std::cerr << "RRQ " << hostname << ":" << port << " \"" << remoteFilePath << "\" " << mode;
-    if (!options.empty())
+    if (option_timeout_used == true || option_blksize_used == true)
     {
-        std::cerr << " with options: " << options;
+
+        if (option_timeout_used == true)
+        {
+            std::cerr << " timeout=" << params.timeout_max;
+        }
+        if (option_blksize_used == true)
+        {
+            std::cerr << " blksize=" << params.blksize;
+        }
     }
     std::cerr << std::endl;
 }
@@ -594,9 +599,18 @@ bool receiveData(int sock, uint16_t &receivedBlockID, std::string &data, const T
     // Extract the data from the packet (skip the first 4 bytes which are the header)
     data.assign(dataBuffer.begin() + 4, dataBuffer.begin() + receivedBytes);
 
-    std::cerr << "DATA with block ID: " << receivedBlockID << std::endl;
+    std::string srcIP = inet_ntoa(senderAddr.sin_addr);
+    uint16_t srcPort = ntohs(senderAddr.sin_port);
 
-    std::cerr << "Sent DATA packet with size: " << dataBuffer.size() << " bytes, block ID: " << blockID << std::endl; // Print the size and block ID
+    sockaddr_in localAddress;
+    socklen_t addressLength = sizeof(localAddress);
+    getsockname(sock, (struct sockaddr *)&localAddress, &addressLength);
+    uint16_t dstPort = ntohs(localAddress.sin_port);
+
+    // Print the desired format
+    std::cerr << "DATA " << srcIP << ":" << srcPort << ":" << dstPort << " " << receivedBlockID << std::endl;
+
+    // std::cerr << "Sent DATA packet with size: " << dataBuffer.size() << " bytes, block ID: " << blockID << std::endl; // Print the size and block ID
 
     blockID = receivedBlockID + 1;
 
@@ -741,8 +755,6 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
 
         if (options_used == true && firstOACK == false)
         {
-            std::cerr << "options used" << std::endl;
-
             firstOACK = true;
             // Wait for an ACK or OACK response after WRQ and capture the server's port
             if (!receiveAck(sock, blockID, serverPort, params, receivedOptions))
@@ -785,8 +797,6 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
         {
 
             // Receive a DATA packet and store the data in 'data' with block size option
-
-            std::cerr << "We no opitons." << std::endl;
 
             if (!receiveData_without_options(sock, receivedBlockID, data, params, hostname))
             {
