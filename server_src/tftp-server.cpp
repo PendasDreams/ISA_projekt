@@ -10,7 +10,6 @@
 #include <csignal>
 
 // TODO dodělat timeout option
-//      Přidělat size option
 //      ověřit chybový stavy
 //      code review
 //      check RFC
@@ -34,7 +33,6 @@ const size_t MAX_DATA_SIZE = 514;
 const uint16_t ERROR_UNDEFINED = 0;
 const uint16_t ERROR_FILE_NOT_FOUND = 1;
 const uint16_t ERROR_ACCESS_VIOLATION = 2;
-// ...
 
 // Structure to represent a TFTP packet
 struct TFTPPacket

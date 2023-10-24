@@ -29,16 +29,26 @@ run_tftp_client() {
 
 compare_directories() {
     echo -e "\nComparing directories $1 and $2"
-    diff -r $1 $2
+    
+    # Capture the output of diff command in a variable and remove null bytes
+    DIFF_OUTPUT=$(diff -r $1 $2 | tr -d '\0')
     DIFF_STATUS=$?
+    
     if [ $DIFF_STATUS -ne 0 ]; then
         echo -e "${RED}The contents of $1 and $2 differ!${NC}"
+        
+        # Extract and print differing filenames from the diff output
+        echo "$DIFF_OUTPUT" | grep -E 'Only in' | awk -F': ' '{print $2}'
+        
         FAILED_TESTS+=("Directory comparison of $1 and $2")
     else
         echo -e "${GREEN}The contents of $1 and $2 are identical!${NC}"
         PASSED_TESTS+=("Directory comparison of $1 and $2")
     fi
 }
+
+
+
 
 # Check if directories exist
 for DIR in $ROOT_DIRPATH_SERVER $CLIENT_SERVER_PATH; do
@@ -67,7 +77,8 @@ for BLKSIZE in "${BLKSIZES[@]}"; do
             fi
         done
 
-        
+        # Compare directories after Download
+        compare_directories $ROOT_DIRPATH_SERVER $CLIENT_SERVER_PATH
 
         # Upload
         echo -e "\nProcessing upload with options: $OPTIONS"
@@ -81,6 +92,9 @@ for BLKSIZE in "${BLKSIZES[@]}"; do
                 PASSED_TESTS+=("$FILE_NAME upload to server with options: $OPTIONS")
             fi
         done
+
+        # Compare directories after Upload
+        compare_directories $ROOT_DIRPATH_SERVER $CLIENT_SERVER_PATH
     done
 done
 
