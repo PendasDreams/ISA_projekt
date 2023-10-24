@@ -6,6 +6,7 @@ uint16_t blockID = 0;
 bool options_used = false;
 bool option_blksize_used = false;
 bool option_timeout_used = false;
+bool option_tsize_used = false;
 
 bool isAscii(const std::string &fileName)
 {
@@ -249,12 +250,14 @@ bool receiveAck(int sock, uint16_t &receivedBlockID, int &serverPort, const TFTP
     {
         receivedBlockID = 0;
         // This is an OACK packet, parse options
-        size_t pos = 1;
+        size_t pos = 2;
 
         while (pos < receivedBytes)
         {
             std::string option;
             std::string value;
+
+            std::cerr << "we went here" << std::endl;
 
             // Read option until null terminator
             while (pos < receivedBytes && packetBuffer[pos] != 0)
@@ -297,9 +300,13 @@ bool receiveAck(int sock, uint16_t &receivedBlockID, int &serverPort, const TFTP
                 std::cerr << "Error: Requested value from client: " << std::to_string(params.timeout_max) << std::endl;
                 return false;
             }
-        }
+            else if (pair.first == "tsize")
+            {
+                std::cerr << "we givinn hodnota" << std::endl;
 
-        // You can similarly check other options as needed
+                receivedOptions["tsize"] = recieved_options["tsize"];
+            }
+        }
     }
 
     std::cerr << (opcode == 4 ? "ACK" : "OACK") << " " << inet_ntoa(senderAddr.sin_addr) << ":" << ntohs(senderAddr.sin_port);
@@ -539,6 +546,19 @@ void sendReadRequest(int sock, const std::string &hostname, int port, const std:
         requestBuffer.push_back(0); // Null-terminate the value
     }
 
+    if (option_tsize_used == true)
+    {
+        // Add "timeout" followed by a null terminator
+        std::string transfersizeOption = "tsize";
+        requestBuffer.insert(requestBuffer.end(), transfersizeOption.begin(), transfersizeOption.end());
+        requestBuffer.push_back(0); // Null-terminate "timeout"
+
+        // Add the value as a string followed by a null terminator
+        std::string TransfersizeValue = std::to_string(params.transfersize);
+        requestBuffer.insert(requestBuffer.end(), TransfersizeValue.begin(), TransfersizeValue.end());
+        requestBuffer.push_back(0); // Null-terminate the value
+    }
+
     // Create sockaddr_in structure for the remote server
     sockaddr_in serverAddr;
     std::memset(&serverAddr, 0, sizeof(serverAddr));
@@ -564,6 +584,10 @@ void sendReadRequest(int sock, const std::string &hostname, int port, const std:
         if (option_blksize_used == true)
         {
             std::cerr << " blksize=" << params.blksize;
+        }
+        if (option_tsize_used == true)
+        {
+            std::cerr << " tsize=" << params.transfersize;
         }
     }
     std::cerr << std::endl;
@@ -745,6 +769,10 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
     int serverPort = 0;
     bool firstOACK = false;
 
+    long long totalSize;
+    long long dataReceivedSoFar;
+    double percentageReceived;
+
     uint16_t blockID = 0; // Initialize the block ID
 
     while (!transferComplete)
@@ -768,6 +796,10 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
             // Set the server's port and IP address in serverAddr
             serverAddr.sin_port = htons(serverPort);
             inet_pton(AF_INET, hostname.c_str(), &(serverAddr.sin_addr));
+            if (option_tsize_used)
+            {
+                totalSize = std::stoll(receivedOptions["tsize"]); // Convert string to long long
+            }
         }
 
         if (options_used == true)
@@ -791,6 +823,23 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
                 outputFile.close();            // Close the output file
                 remove(localFilePath.c_str()); // Delete the partially downloaded file
                 return 1;
+            }
+            if (option_tsize_used)
+            {
+                // Extract the total size (tsize) from the receivedOptions map
+
+                dataReceivedSoFar = receivedBlockID * params.blksize;
+
+                // Calculate the percentage of data received
+                percentageReceived = ((double)dataReceivedSoFar / totalSize) * 100;
+
+                if (percentageReceived > 100)
+                {
+                    percentageReceived = 100;
+                }
+
+                // Print the percentage
+                std::cout << "Received: " << percentageReceived << "% of total data." << std::endl;
             }
         }
         else
@@ -875,6 +924,7 @@ bool parseTFTPParameters(const std::string &Oparamstring, TFTPOparams &Oparams)
         if (paramName == "blksize")
         {
             option_blksize_used = true;
+
             int blksize = std::stoi(paramValue);
             if (blksize >= 8 && blksize <= 65464) // Kontrola platného rozsahu blksize
             {
@@ -901,8 +951,11 @@ bool parseTFTPParameters(const std::string &Oparamstring, TFTPOparams &Oparams)
                 return false;
             }
         }
-        else if (paramName == "transfersize")
+        else if (paramName == "tsize")
         {
+
+            option_tsize_used = true;
+
             int transfersize = std::stoi(paramValue);
             if (transfersize >= 0)
             {
@@ -910,7 +963,7 @@ bool parseTFTPParameters(const std::string &Oparamstring, TFTPOparams &Oparams)
             }
             else
             {
-                std::cerr << "Chybná hodnota parametru transfersize: " << transfersize << std::endl;
+                std::cerr << "Chybná hodnota parametru tsize: " << transfersize << std::endl;
                 return false;
             }
         }
@@ -936,9 +989,9 @@ int main(int argc, char *argv[])
     TFTPOparams Oparams;
 
     // Inicializace parametrů na výchozí hodnoty
-    Oparams.blksize = 512;       // Výchozí hodnota blksize
-    Oparams.timeout_max = 5;     // Výchozí hodnota timeout_max
-    Oparams.transfersize = 1000; // Výchozí hodnota transfersize
+    Oparams.blksize = 512;    // Výchozí hodnota blksize
+    Oparams.timeout_max = 5;  // Výchozí hodnota timeout_max
+    Oparams.transfersize = 0; // Výchozí hodnota transfersize
 
     // Process command-line arguments, including optional parameters
     for (int i = 1; i < argc; ++i)
