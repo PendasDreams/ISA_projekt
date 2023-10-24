@@ -68,12 +68,11 @@ void sendError(int sockfd, uint16_t errorCode, const std::string &errorMsg, sock
 
 bool sendDataPacket(int sockfd, sockaddr_in &clientAddr, uint16_t blockNum, const char *data, size_t dataSize, uint16_t blockSize)
 {
-
     uint16_t opcode = htons(DATA);
     uint16_t blockNumNetwork = htons(blockNum);
     uint16_t blockSizeOption = htons(0x0004); // Blocksize Option
 
-    size_t packetSize = sizeof(uint16_t) * 2 + dataSize;
+    size_t packetSize = sizeof(uint16_t) * 3 + dataSize; // 3 for opcode, blockNum, and blockSizeOption
 
     std::vector<uint8_t> dataPacket(packetSize);
 
@@ -81,8 +80,6 @@ bool sendDataPacket(int sockfd, sockaddr_in &clientAddr, uint16_t blockNum, cons
     memcpy(dataPacket.data(), &opcode, sizeof(uint16_t));
     memcpy(dataPacket.data() + sizeof(uint16_t), &blockNumNetwork, sizeof(uint16_t));
     memcpy(dataPacket.data() + sizeof(uint16_t) * 2, data, dataSize);
-
-    // Copy the block size option into the packet
     memcpy(dataPacket.data() + sizeof(uint16_t) * 2 + dataSize, &blockSizeOption, sizeof(uint16_t));
 
     ssize_t sentBytes = sendto(sockfd, dataPacket.data(), packetSize, 0, (struct sockaddr *)&clientAddr, sizeof(clientAddr));
@@ -223,7 +220,10 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filena
     while (true)
     {
         // Read data into the buffer
+
         file.read(dataBuffer.data(), params.blksize); // Use dataBuffer.data() to get a pointer to the underlying array
+        std::cerr << "befor readig data" << std::endl;
+
         std::streamsize bytesRead = file.gcount();
 
         if (bytesRead > 0)
@@ -234,6 +234,7 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filena
 
             while (retries < maxRetries)
             {
+
                 if (!sendDataPacket(sockfd, clientAddr, blockNum, dataBuffer.data(), bytesRead, bytesRead))
                 {
                     file.close();
@@ -676,7 +677,7 @@ void runTFTPServer(int port, const std::string &root_dirpath)
             {
                 if (!options_map.empty())
                 {
-                    if (!sendOACK(sockfd, clientAddr, options_map, params, 0)) // 0 zatím
+                    if (!sendOACK(sockfd, clientAddr, options_map, params, params.transfersize)) // 0 zatím
                     {
                         continue;
                     }
@@ -714,7 +715,7 @@ void runTFTPServer(int port, const std::string &root_dirpath)
                             retries++;
                             if (!options_map.empty() && blockNum == 1)
                             {
-                                if (!sendOACK(sockfd, clientAddr, options_map, params, 0)) // 0 zatím
+                                if (!sendOACK(sockfd, clientAddr, options_map, params, params.transfersize)) // 0 zatím
                                 {
                                     continue;
                                 }
@@ -775,7 +776,7 @@ void sigintHandler(int signal)
 
 int main(int argc, char *argv[])
 {
-    // std::signal(SIGINT, sigintHandler);
+    std::signal(SIGINT, sigintHandler);
 
     int port = 69;            // Default TFTP port
     std::string root_dirpath; // Directory path

@@ -32,7 +32,7 @@ struct TFTPOparams
 {
     uint16_t blksize;
     uint16_t timeout_max;
-    uint16_t transfersize;
+    int transfersize;
 };
 
 extern uint16_t blockID;

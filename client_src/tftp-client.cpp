@@ -163,13 +163,27 @@ bool sendWriteRequest(int sock, const std::string &hostname, int port, const std
     if (option_timeout_used == true)
     {
         // Add "blksize" followed by a null terminator
-        std::string blocksizeOption = "timeout";
-        requestBuffer.insert(requestBuffer.end(), blocksizeOption.begin(), blocksizeOption.end());
+        std::string timeoutOption = "timeout";
+        requestBuffer.insert(requestBuffer.end(), timeoutOption.begin(), timeoutOption.end());
+        requestBuffer.push_back(0);
+
+        // Add the value as a string followed by a null terminator
+        std::string timeoutValue = std::to_string(params.timeout_max);
+        requestBuffer.insert(requestBuffer.end(), timeoutValue.begin(), timeoutValue.end());
+        requestBuffer.push_back(0);
+    }
+
+    if (option_tsize_used == true)
+    {
+        // Add "blksize" followed by a null terminator
+        std::string transferSizeOption = "tsize";
+        requestBuffer.insert(requestBuffer.end(), transferSizeOption.begin(), transferSizeOption.end());
         requestBuffer.push_back(0); // Null-terminate "blksize"
 
         // Add the value as a string followed by a null terminator
-        std::string blockSizeValue = std::to_string(params.timeout_max);
-        requestBuffer.insert(requestBuffer.end(), blockSizeValue.begin(), blockSizeValue.end());
+
+        std::string transersizeValue = std::to_string(params.transfersize);
+        requestBuffer.insert(requestBuffer.end(), transersizeValue.begin(), transersizeValue.end());
         requestBuffer.push_back(0); // Null-terminate the value
     }
 
@@ -191,7 +205,7 @@ bool sendWriteRequest(int sock, const std::string &hostname, int port, const std
     std::cerr << std::endl;
 
     std::cerr << "WRQ " << hostname << ":" << port << " \"" << filepath << "\" " << mode;
-    if (option_timeout_used == true || option_blksize_used == true)
+    if (option_timeout_used == true || option_blksize_used == true || option_tsize_used == true)
     {
 
         if (option_timeout_used == true)
@@ -201,6 +215,10 @@ bool sendWriteRequest(int sock, const std::string &hostname, int port, const std
         if (option_blksize_used == true)
         {
             std::cerr << " blksize=" << params.blksize;
+        }
+        if (option_tsize_used == true)
+        {
+            std::cerr << " tsize=" << params.transfersize;
         }
     }
     std::cerr << std::endl;
@@ -257,8 +275,6 @@ bool receiveAck(int sock, uint16_t &receivedBlockID, int &serverPort, const TFTP
             std::string option;
             std::string value;
 
-            std::cerr << "we went here" << std::endl;
-
             // Read option until null terminator
             while (pos < receivedBytes && packetBuffer[pos] != 0)
             {
@@ -302,8 +318,6 @@ bool receiveAck(int sock, uint16_t &receivedBlockID, int &serverPort, const TFTP
             }
             else if (pair.first == "tsize")
             {
-                std::cerr << "we givinn hodnota" << std::endl;
-
                 receivedOptions["tsize"] = recieved_options["tsize"];
             }
         }
@@ -427,6 +441,15 @@ int SendFile(int sock, const std::string &hostname, int port, const std::string 
     bool transferComplete = false;
     int max_retries = 4;
 
+    long long totalSize;
+    long long dataReceivedSoFar;
+    double percentageReceived;
+
+    if (option_tsize_used)
+    {
+        totalSize = params.transfersize; // Convert string to long long
+    }
+
     while (!transferComplete)
     {
         inputStream->read(buffer, maxDataSize);
@@ -468,6 +491,24 @@ int SendFile(int sock, const std::string &hostname, int port, const std::string 
                 return 1;
             }
 
+            if (option_tsize_used)
+            {
+                // Extract the total size (tsize) from the receivedOptions map
+
+                dataReceivedSoFar = blockID * params.blksize;
+
+                // Calculate the percentage of data received
+                percentageReceived = ((double)dataReceivedSoFar / totalSize) * 100;
+
+                if (percentageReceived > 100)
+                {
+                    percentageReceived = 100;
+                }
+
+                // Print the percentage
+                std::cout << "Send: " << percentageReceived << "% of total data." << std::endl;
+            }
+
             if (bytesRead < maxDataSize) // If we read less than the max data size, we're done.
             {
                 transferComplete = true;
@@ -475,7 +516,6 @@ int SendFile(int sock, const std::string &hostname, int port, const std::string 
         }
         else
         {
-            std::cerr << "Bytes read shit" << std::endl;
 
             // No more data to send
             transferComplete = true;
@@ -487,6 +527,7 @@ int SendFile(int sock, const std::string &hostname, int port, const std::string 
     {
         file.close();
     }
+    std::cout << "Upload file complete" << std::endl;
 
     // Close the socket
     close(sock);
@@ -753,7 +794,7 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
         return 1;
     }
 
-    std::cerr << "File opened" << std::endl;
+    std::cout << "File opened" << std::endl;
 
     // Send an RRQ packet to request the file from the server with options
     sendReadRequest(sock, hostname, port, remoteFilePath, mode, options, params);
@@ -905,7 +946,7 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
     // Close the socket
     close(sock);
 
-    std::cerr << "File download complete: " << localFilePath << std::endl;
+    std::cout << "File download complete: " << localFilePath << std::endl;
 }
 
 bool parseTFTPParameters(const std::string &Oparamstring, TFTPOparams &Oparams)
