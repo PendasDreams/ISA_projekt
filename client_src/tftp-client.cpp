@@ -8,6 +8,15 @@ bool option_blksize_used = false;
 bool option_timeout_used = false;
 bool option_tsize_used = false;
 
+// TFTP Error Codes
+const uint16_t ERROR_UNDEFINED = 0;
+const uint16_t ERROR_FILE_NOT_FOUND = 1;
+const uint16_t ERROR_ACCESS_VIOLATION = 2;
+const uint16_t ERROR_DISK_FULL = 3;
+const uint16_t ERROR_ILLEGAL_OPERATION = 4;
+const uint16_t ERROR_UNKNOWN_TRANSFER_ID = 5;
+const uint16_t ERROR_FILE_ALREADY_EXISTS = 6;
+
 bool isAscii(const std::string &fileName)
 {
     // Zjistěte příponu souboru
@@ -842,7 +851,7 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
                 totalSize = std::stoll(receivedOptions["tsize"]); // Convert string to long long
             }
         }
-
+        //
         if (options_used == true)
         {
 
@@ -874,9 +883,10 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
                 // Calculate the percentage of data received
                 percentageReceived = ((double)dataReceivedSoFar / totalSize) * 100;
 
-                if (percentageReceived > 100)
+                if (percentageReceived >= 100)
                 {
                     percentageReceived = 100;
+                    transferComplete = true;
                 }
 
                 // Print the percentage
@@ -922,6 +932,8 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
         blockID = receivedBlockID;
 
         // If the received data block is less than the block size, it indicates the end of the transfer
+        std::cerr << "Size of data (" << data.size() << ") is less than params.blksize (" << params.blksize << ")." << std::endl;
+
         if (data.size() < params.blksize)
         {
 

@@ -55,6 +55,7 @@
     "iomanip": "cpp",
     "sstream": "cpp",
     "map": "cpp",
-    "csignal": "cpp"
+    "csignal": "cpp",
+    "codecvt": "cpp"
   }
 }
