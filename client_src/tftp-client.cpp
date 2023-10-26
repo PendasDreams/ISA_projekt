@@ -1,30 +1,5 @@
 #include "tftp-client.h"
 
-// Define the initial block ID
-uint16_t blockID = 0;
-
-bool options_used = false;
-bool option_blksize_used = false;
-bool option_timeout_used = false;
-bool option_tsize_used = false;
-
-// TFTP Error Codes
-const uint16_t ERROR_UNDEFINED = 0;
-const uint16_t ERROR_FILE_NOT_FOUND = 1;
-const uint16_t ERROR_ACCESS_VIOLATION = 2;
-const uint16_t ERROR_DISK_FULL = 3;
-const uint16_t ERROR_ILLEGAL_OPERATION = 4;
-const uint16_t ERROR_UNKNOWN_TRANSFER_ID = 5;
-const uint16_t ERROR_FILE_ALREADY_EXISTS = 6;
-
-enum TFTPRequestType
-{
-    READ_REQUEST,
-    WRITE_REQUEST
-};
-
-bool sendTFTPRequest(TFTPRequestType requestType, int sock, const std::string &hostname, int port, const std::string &filepath, const std::string &mode, const TFTPOparams &params);
-
 bool isAscii(const std::string &fileName)
 {
     // Zjistěte příponu souboru

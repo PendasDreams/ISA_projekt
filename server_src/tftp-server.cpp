@@ -33,6 +33,10 @@ const size_t MAX_DATA_SIZE = 514;
 const uint16_t ERROR_UNDEFINED = 0;
 const uint16_t ERROR_FILE_NOT_FOUND = 1;
 const uint16_t ERROR_ACCESS_VIOLATION = 2;
+const uint16_t ERROR_DISK_FULL = 3;
+const uint16_t ERROR_ILLEGAL_OPERATION = 4;
+const uint16_t ERROR_UNKNOWN_TRANSFER_ID = 5;
+const uint16_t ERROR_FILE_ALREADY_EXISTS = 6;
 
 // Structure to represent a TFTP packet
 struct TFTPPacket
