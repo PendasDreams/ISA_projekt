@@ -356,6 +356,8 @@ bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr, 
                 return false;
             }
             std::cerr << "Error receiving ACK packet" << std::endl;
+            sendError(sockfd, ERROR_UNDEFINED, "Error receiving ACK packet", clientAddr);
+
             return false;
         }
 
@@ -363,6 +365,8 @@ bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr, 
         {
             // Invalid ACK packet
             std::cerr << "Received an invalid ACK packet" << std::endl;
+            sendError(sockfd, ERROR_UNDEFINED, "Received an invalid ACK packet", clientAddr);
+
             return false;
         }
 
@@ -389,6 +393,7 @@ bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr, 
             {
                 // Received an out-of-order ACK (unexpected)
                 std::cerr << "Received an unexpected ACK for block " << blockNum << std::endl;
+                sendError(sockfd, ERROR_UNKNOWN_TRANSFER_ID, "Unexpected ACK ID for block", clientAddr);
                 return false;
             }
         }
@@ -396,6 +401,7 @@ bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr, 
         {
             // Received an unexpected packet (not an ACK)
             std::cerr << "Received an unexpected packet with opcode " << opcode << std::endl;
+            sendError(sockfd, ERROR_ILLEGAL_OPERATION, "ERROR_ILLEGAL_OPERATION", clientAddr);
             return false;
         }
     }
@@ -476,12 +482,14 @@ bool receiveDataPacket(int sockfd, sockaddr_in &clientAddr, sockaddr_in &serverA
         {
             // Received a duplicate DATA packet (ignore)
             std::cerr << "Received a duplicate DATA packet for block " << blockNum << std::endl;
+            sendError(sockfd, ERROR_UNKNOWN_TRANSFER_ID, "Duplicate DATA packet", clientAddr);
             return false;
         }
         else
         {
             // Received an out-of-order DATA packet (unexpected)
             std::cerr << "Received an unexpected DATA packet for block " << blockNum << std::endl;
+            sendError(sockfd, ERROR_UNKNOWN_TRANSFER_ID, "Unexpected DATA packet", clientAddr);
             return false;
         }
     }
@@ -489,6 +497,7 @@ bool receiveDataPacket(int sockfd, sockaddr_in &clientAddr, sockaddr_in &serverA
     {
         // Received an unexpected packet (not a DATA packet)
         std::cerr << "Received an unexpected packet with opcode " << opcode << std::endl;
+        sendError(sockfd, ERROR_ILLEGAL_OPERATION, "Unexpected packet with opcode", clientAddr);
         return false;
     }
 }
