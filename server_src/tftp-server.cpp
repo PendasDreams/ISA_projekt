@@ -9,6 +9,7 @@
 #include <iomanip>
 #include <csignal>
 #include <sys/statvfs.h>
+#include <filesystem>
 
 // TODO
 //      posílání souboru který vychází přesně tak poslední packt 0
@@ -16,6 +17,7 @@
 //      code review
 //      check RFC
 //      ověřit na referenčním stroji
+//      odelat file exists
 //      dokumentace
 
 bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr, int timeout);
@@ -63,6 +65,12 @@ struct TFTPOparams
 };
 
 void sendError(int sockfd, uint16_t errorCode, const std::string &errorMsg, sockaddr_in &clientAddr);
+
+bool fileExists(const std::string &filepath)
+{
+    std::ifstream file(filepath.c_str());
+    return file.good();
+}
 
 int handleIncomingPacket(int sockfd, sockaddr_in &clientAddr, int opcode)
 {
@@ -268,7 +276,6 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filena
         // Read data into the buffer
 
         file.read(dataBuffer.data(), params.blksize); // Use dataBuffer.data() to get a pointer to the underlying array
-        std::cerr << "befor readig data" << std::endl;
 
         std::streamsize bytesRead = file.gcount();
 
@@ -469,7 +476,7 @@ bool receiveDataPacket(int sockfd, sockaddr_in &clientAddr, sockaddr_in &serverA
                 lastblockfromoutside = true;
             }
 
-            std::cout << "DATA "
+            std::cerr << "DATA "
                       << inet_ntoa(clientAddr.sin_addr) << ":"
                       << ntohs(clientAddr.sin_port) << ":"
                       << ntohs(serverAddr.sin_port) << " "
@@ -703,7 +710,7 @@ void runTFTPServer(int port, const std::string &root_dirpath)
         if (opcode == RRQ)
         {
 
-            std::cout << "RRQ "
+            std::cerr << "RRQ "
                       << inet_ntoa(clientAddr.sin_addr) << ":"
                       << ntohs(clientAddr.sin_port) << " \""
                       << filename << "\" "
@@ -719,13 +726,19 @@ void runTFTPServer(int port, const std::string &root_dirpath)
         else if (opcode == WRQ)
         {
 
-            std::cout << "WRQ "
+            std::cerr << "WRQ "
                       << inet_ntoa(clientAddr.sin_addr) << ":"
                       << ntohs(clientAddr.sin_port) << " \""
                       << filename << "\" "
                       << mode << " "
                       << optionsString
                       << std::endl;
+
+            // if (fileExists(filename))
+            // {
+            //     std::cout << "The file " << filename << " exists." << std::endl;
+            //     sendError(sockfd, ERROR_FILE_ALREADY_EXISTS, "File exists", clientAddr);
+            // }
 
             if (transfersizeOptionUsed)
             {
