@@ -31,6 +31,9 @@ const uint16_t OACK = 6;
 // Maximum data packet size
 const size_t MAX_DATA_SIZE = 514;
 
+const uint16_t OP_RRQ = 1;
+const uint16_t OP_WRQ = 2;
+
 // TFTP Error Codes
 const uint16_t ERROR_UNDEFINED = 0;
 const uint16_t ERROR_FILE_NOT_FOUND = 1;
@@ -58,6 +61,24 @@ struct TFTPOparams
     uint16_t timeout;
     int transfersize;
 };
+
+void sendError(int sockfd, uint16_t errorCode, const std::string &errorMsg, sockaddr_in &clientAddr);
+
+int handleIncomingPacket(int sockfd, sockaddr_in &clientAddr, int opcode)
+{
+    switch (opcode)
+    {
+    case OP_RRQ:
+        return 0;
+    case OP_WRQ:
+        return 0;
+
+    default:
+        sendError(sockfd, ERROR_ILLEGAL_OPERATION, "Illegal operation", clientAddr);
+        std::cerr << "Illegal operation detected!" << std::endl;
+        return 1;
+    }
+}
 
 uint16_t checkDiskSpace(int size_of_file, const std::string &path)
 {
@@ -663,6 +684,11 @@ void runTFTPServer(int port, const std::string &root_dirpath)
         for (const auto &pair : options_map)
         {
             optionsString += pair.first + "=" + std::to_string(pair.second) + " ";
+        }
+
+        if (handleIncomingPacket(sockfd, clientAddr, opcode) == 1)
+        {
+            continue;
         }
 
         if (opcode == RRQ)
