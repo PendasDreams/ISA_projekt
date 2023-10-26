@@ -8,8 +8,10 @@
 #include <map>
 #include <iomanip>
 #include <csignal>
+#include <sys/statvfs.h>
 
 // TODO
+//      posílání souboru který vychází přesně tak poslední packt 0
 //      ověřit chybový stavy -- něco už v chatgpt
 //      code review
 //      check RFC
@@ -56,6 +58,29 @@ struct TFTPOparams
     uint16_t timeout;
     int transfersize;
 };
+
+uint16_t checkDiskSpace(int size_of_file, const std::string &path)
+{
+    struct statvfs stat;
+
+    // Convert std::string to const char*
+    const char *path_cstr = path.c_str();
+
+    if (statvfs(path_cstr, &stat) != 0)
+    {
+        std::cerr << "Error retrieving disk information." << std::endl;
+        return ERROR_UNDEFINED;
+    }
+
+    uint64_t freeSpace = stat.f_bsize * stat.f_bfree;
+
+    if (freeSpace < size_of_file)
+    {
+        return ERROR_DISK_FULL;
+    }
+
+    return 0;
+}
 
 // Function to send an error packet
 void sendError(int sockfd, uint16_t errorCode, const std::string &errorMsg, sockaddr_in &clientAddr)
@@ -667,11 +692,25 @@ void runTFTPServer(int port, const std::string &root_dirpath)
                       << optionsString
                       << std::endl;
 
+            if (transfersizeOptionUsed)
+            {
+
+                uint16_t diskspace = checkDiskSpace(params.transfersize, filename);
+
+                if (diskspace == ERROR_DISK_FULL)
+                {
+                    std::cout << "ERROR_DISK_FULL!" << std::endl;
+                    sendError(sockfd, ERROR_DISK_FULL, "Disk full", clientAddr);
+                    continue;
+                }
+            }
+
             std::ofstream file(filename, std::ios::binary);
 
             if (!file)
             {
                 sendError(sockfd, ERROR_ACCESS_VIOLATION, "Access violation", clientAddr);
+                continue;
             }
             else
             {
