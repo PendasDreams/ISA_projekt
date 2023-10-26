@@ -9,8 +9,10 @@
 #include <iomanip>
 #include <csignal>
 
-// TODO dodělat timeout option
-//      ověřit chybový stavy
+// TODO
+//
+//      když blocksize je poslední musí odeslat ještě null packet
+//      ověřit chybový stavy -- něco už v chatgpt
 //      code review
 //      check RFC
 //      ověřit na referenčním stroji
