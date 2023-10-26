@@ -17,6 +17,14 @@ const uint16_t ERROR_ILLEGAL_OPERATION = 4;
 const uint16_t ERROR_UNKNOWN_TRANSFER_ID = 5;
 const uint16_t ERROR_FILE_ALREADY_EXISTS = 6;
 
+enum TFTPRequestType
+{
+    READ_REQUEST,
+    WRITE_REQUEST
+};
+
+bool sendTFTPRequest(TFTPRequestType requestType, int sock, const std::string &hostname, int port, const std::string &filepath, const std::string &mode, const TFTPOparams &params);
+
 bool isAscii(const std::string &fileName)
 {
     // Zjistěte příponu souboru
@@ -144,96 +152,6 @@ void handleError(int sock, const std::string &hostname, int srcPort, int dstPort
 }
 
 // Function to send WRQ (Write Request) packet with optional parameters (OACK)
-bool sendWriteRequest(int sock, const std::string &hostname, int port, const std::string &filepath, const std::string &mode, const std::string &options, const TFTPOparams &params)
-{
-    // Create a buffer for the write request packet
-    std::vector<uint8_t> requestBuffer;
-    requestBuffer.push_back(0); // High byte of opcode (0 for WRQ)
-    requestBuffer.push_back(2); // Low byte of opcode (2 for WRQ)
-    requestBuffer.insert(requestBuffer.end(), filepath.begin(), filepath.end());
-    requestBuffer.push_back(0); // Null-terminate the filepath
-    requestBuffer.insert(requestBuffer.end(), mode.begin(), mode.end());
-    requestBuffer.push_back(0); // Null-terminate the mode
-
-    // Append the blocksize option from params if blksize > 0
-    if (option_blksize_used == true)
-    {
-        // Add "blksize" followed by a null terminator
-        std::string blocksizeOption = "blksize";
-        requestBuffer.insert(requestBuffer.end(), blocksizeOption.begin(), blocksizeOption.end());
-        requestBuffer.push_back(0); // Null-terminate "blksize"
-
-        // Add the value as a string followed by a null terminator
-        std::string blockSizeValue = std::to_string(params.blksize);
-        requestBuffer.insert(requestBuffer.end(), blockSizeValue.begin(), blockSizeValue.end());
-        requestBuffer.push_back(0); // Null-terminate the value
-    }
-
-    if (option_timeout_used == true)
-    {
-        // Add "blksize" followed by a null terminator
-        std::string timeoutOption = "timeout";
-        requestBuffer.insert(requestBuffer.end(), timeoutOption.begin(), timeoutOption.end());
-        requestBuffer.push_back(0);
-
-        // Add the value as a string followed by a null terminator
-        std::string timeoutValue = std::to_string(params.timeout_max);
-        requestBuffer.insert(requestBuffer.end(), timeoutValue.begin(), timeoutValue.end());
-        requestBuffer.push_back(0);
-    }
-
-    if (option_tsize_used == true)
-    {
-        // Add "blksize" followed by a null terminator
-        std::string transferSizeOption = "tsize";
-        requestBuffer.insert(requestBuffer.end(), transferSizeOption.begin(), transferSizeOption.end());
-        requestBuffer.push_back(0); // Null-terminate "blksize"
-
-        // Add the value as a string followed by a null terminator
-
-        std::string transersizeValue = std::to_string(params.transfersize);
-        requestBuffer.insert(requestBuffer.end(), transersizeValue.begin(), transersizeValue.end());
-        requestBuffer.push_back(0); // Null-terminate the value
-    }
-
-    // Create a sockaddr_in structure for the remote server
-    sockaddr_in serverAddr;
-    std::memset(&serverAddr, 0, sizeof(serverAddr));
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(port);
-    inet_pton(AF_INET, hostname.c_str(), &(serverAddr.sin_addr));
-
-    // Send the write request packet
-    ssize_t sentBytes = sendto(sock, requestBuffer.data(), requestBuffer.size(), 0, (struct sockaddr *)&serverAddr, sizeof(serverAddr));
-    if (sentBytes == -1)
-    {
-        std::cerr << "Error: Failed to send WRQ packet." << std::endl;
-        return false;
-    }
-
-    std::cerr << std::endl;
-
-    std::cerr << "WRQ " << hostname << ":" << port << " \"" << filepath << "\" " << mode;
-    if (option_timeout_used == true || option_blksize_used == true || option_tsize_used == true)
-    {
-
-        if (option_timeout_used == true)
-        {
-            std::cerr << " timeout=" << params.timeout_max;
-        }
-        if (option_blksize_used == true)
-        {
-            std::cerr << " blksize=" << params.blksize;
-        }
-        if (option_tsize_used == true)
-        {
-            std::cerr << " tsize=" << params.transfersize;
-        }
-    }
-    std::cerr << std::endl;
-    return true;
-}
-
 bool receiveAck(int sock, uint16_t &receivedBlockID, int &serverPort, const TFTPOparams &params, std::map<std::string, std::string> &receivedOptions)
 {
     // Create a buffer to receive the ACK or OACK packet
@@ -424,10 +342,12 @@ int SendFile(int sock, const std::string &hostname, int port, const std::string 
     // Send WRQ packet with optional parameters (OACK) and retry up to 4 times if no ACK/OACK is received
     while (!wrqAckReceived && writeRequestRetries < 4)
     {
-        if (!sendWriteRequest(sock, hostname, port, localFilePath, mode, options, params))
-        {
-            return 1;
-        }
+        // if (!sendWriteRequest(sock, hostname, port, localFilePath, mode, options, params))
+        // {
+        //     return 1;
+        // }
+
+        sendTFTPRequest(WRITE_REQUEST, sock, hostname, port, localFilePath, mode, params);
 
         wrqAckReceived = receiveAck(sock, blockID, serverPort, params, receivedOptions);
 
@@ -551,23 +471,24 @@ int SendFile(int sock, const std::string &hostname, int port, const std::string 
 //****************************************************************************************************************************
 
 // Function to send RRQ (Read Request) packet
-void sendReadRequest(int sock, const std::string &hostname, int port, const std::string &remoteFilePath, const std::string &mode, const std::string &options, const TFTPOparams &params)
+bool sendTFTPRequest(TFTPRequestType requestType, int sock, const std::string &hostname, int port, const std::string &filepath, const std::string &mode, const TFTPOparams &params)
 {
-    // Create an RRQ packet (opcode 1)
     std::vector<uint8_t> requestBuffer;
-    requestBuffer.push_back(0); // High byte of opcode (0 for RRQ)
-    requestBuffer.push_back(1); // Low byte of opcode (1 for RRQ)
-    requestBuffer.insert(requestBuffer.end(), remoteFilePath.begin(), remoteFilePath.end());
-    requestBuffer.push_back(0); // Null-terminate the filepath
-    requestBuffer.insert(requestBuffer.end(), mode.begin(), mode.end());
-    requestBuffer.push_back(0); // Null-terminate the mode
+    if (requestType == READ_REQUEST)
+    {
+        requestBuffer.push_back(0);
+        requestBuffer.push_back(1); // Opcode for RRQ
+    }
+    else
+    {
+        requestBuffer.push_back(0);
+        requestBuffer.push_back(2); // Opcode for WRQ
+    }
 
-    // // Append optional parameters if provided
-    // if (!options.empty())
-    // {
-    //     requestBuffer.insert(requestBuffer.end(), options.begin(), options.end());
-    //     requestBuffer.push_back(0); // Null-terminate the options
-    // }
+    requestBuffer.insert(requestBuffer.end(), filepath.begin(), filepath.end());
+    requestBuffer.push_back(0);
+    requestBuffer.insert(requestBuffer.end(), mode.begin(), mode.end());
+    requestBuffer.push_back(0);
 
     // Append the blocksize option from params if blksize > 0
     if (option_blksize_used == true)
@@ -620,10 +541,11 @@ void sendReadRequest(int sock, const std::string &hostname, int port, const std:
     ssize_t sentBytes = sendto(sock, requestBuffer.data(), requestBuffer.size(), 0, (struct sockaddr *)&serverAddr, sizeof(serverAddr));
     if (sentBytes == -1)
     {
-        std::cerr << "Error: Failed to send RRQ packet." << std::endl;
+        std::cerr << "Error: Failed to send " << (requestType == READ_REQUEST ? "RRQ" : "WRQ") << " packet." << std::endl;
+        return false;
     }
 
-    std::cerr << "RRQ " << hostname << ":" << port << " \"" << remoteFilePath << "\" " << mode;
+    std::cerr << (requestType == READ_REQUEST ? "RRQ " : "WRQ ") << hostname << ":" << port << " \"" << filepath << "\" " << mode;
     if (option_timeout_used == true || option_blksize_used == true)
     {
 
@@ -806,7 +728,7 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
     std::cout << "File opened" << std::endl;
 
     // Send an RRQ packet to request the file from the server with options
-    sendReadRequest(sock, hostname, port, remoteFilePath, mode, options, params);
+    sendTFTPRequest(READ_REQUEST, sock, hostname, port, remoteFilePath, mode, params);
 
     bool transferComplete = false;
 
@@ -929,9 +851,6 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
 
         // Increment the block ID for the next ACK
         blockID = receivedBlockID;
-
-        // If the received data block is less than the block size, it indicates the end of the transfer
-        std::cerr << "Size of data (" << data.size() << ") is less than params.blksize (" << params.blksize << ")." << std::endl;
 
         if (data.size() < params.blksize)
         {

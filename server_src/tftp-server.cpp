@@ -10,8 +10,6 @@
 #include <csignal>
 
 // TODO
-//      upravit inpt aby byly v uvozovkách a s mezerou
-//      porovnat výstupy s tftpclientem
 //      ověřit chybový stavy -- něco už v chatgpt
 //      code review
 //      check RFC
