@@ -24,8 +24,10 @@ TSIZE="0"
 
 run_tftp_client() {
     echo "Running: ./tftp-client $@"
-    ./tftp-client $@
+    ./tftp-client "$@"  # Enclose "$@" in double quotes
 }
+
+
 
 compare_directories() {
     echo -e "\nComparing directories $1 and $2"
@@ -61,42 +63,60 @@ done
 # Download and Upload tests with combinations of options
 for BLKSIZE in "${BLKSIZES[@]}"; do
     for TIMEOUT in "${TIMEOUTS[@]}"; do
-        OPTIONS="--option blksize=$BLKSIZE --option timeout=$TIMEOUT --option tsize=$TSIZE"
+        # Options are passed in the desired format now
+        OPTIONS="--option \"blksize $BLKSIZE\" --option \"timeout $TIMEOUT\" --option \"tsize $TSIZE\""
 
-        # Download
-        echo -e "\nProcessing download with options: $OPTIONS"
-        for SERVER_FILE in $ROOT_DIRPATH_SERVER/*; do
-            FILE_NAME=$(basename $SERVER_FILE)
-            CLIENT_FILE="$CLIENT_SERVER_PATH/$FILE_NAME"
-            run_tftp_client -h $SERVER -p $PORT -f $FILE_NAME -t $CLIENT_FILE $OPTIONS
-            # Check success and store results
-            if [[ $? -ne 0 ]]; then
-                FAILED_TESTS+=("$FILE_NAME download from server with options: $OPTIONS")
-            else
-                PASSED_TESTS+=("$FILE_NAME download from server with options: $OPTIONS")
-            fi
-        done
+# Download
+echo -e "\nProcessing download with options: $OPTIONS"
+for SERVER_FILE in $ROOT_DIRPATH_SERVER/*; do
+    FILE_NAME=$(basename $SERVER_FILE)
+    CLIENT_FILE="$CLIENT_SERVER_PATH/$FILE_NAME"
+    eval run_tftp_client -h $SERVER -p $PORT -f $FILE_NAME -t $CLIENT_FILE $OPTIONS
+    # Check success and store results
+    if [[ $? -ne 0 ]]; then
+        FAILED_TESTS+=("$FILE_NAME download from server with options: $OPTIONS")
+    else
+        PASSED_TESTS+=("$FILE_NAME download from server with options: $OPTIONS")
+    fi
+done
 
         # Compare directories after Download
         compare_directories $ROOT_DIRPATH_SERVER $CLIENT_SERVER_PATH
 
-        # Upload
-        echo -e "\nProcessing upload with options: $OPTIONS"
-        for CLIENT_FILE in $CLIENT_SERVER_PATH/*; do
-            FILE_NAME=$(basename $CLIENT_FILE)
-            echo "$CLIENT_FILE" | run_tftp_client -h $SERVER -p $PORT -t $FILE_NAME $OPTIONS
-            # Check success and store results
-            if [[ $? -ne 0 ]]; then
-                FAILED_TESTS+=("$FILE_NAME upload to server with options: $OPTIONS")
-            else
-                PASSED_TESTS+=("$FILE_NAME upload to server with options: $OPTIONS")
-            fi
-        done
+# Upload
+echo -e "\nProcessing upload with options: $OPTIONS"
+for CLIENT_FILE in $CLIENT_SERVER_PATH/*; do
+    FILE_NAME=$(basename "$CLIENT_FILE")
+    
+    # Create a temporary file containing the file path
+    TEMP_FILE=$(mktemp)
+    echo "$CLIENT_SERVER_PATH/$FILE_NAME" > "$TEMP_FILE"
+    
+    # Construct the command for upload
+    UPLOAD_COMMAND="./tftp-client -h $SERVER -p $PORT -t \"$FILE_NAME\" $OPTIONS < \"$TEMP_FILE\""
+    echo "Running upload command: $UPLOAD_COMMAND"
+    
+    # Execute the upload command
+    eval $UPLOAD_COMMAND
+    
+    # Check success and store results
+    if [[ $? -ne 0 ]]; then
+        FAILED_TESTS+=("$FILE_NAME upload to server with options: $OPTIONS")
+    else
+        PASSED_TESTS+=("$FILE_NAME upload to server with options: $OPTIONS")
+    fi
+    
+    # Clean up the temporary file
+    rm "$TEMP_FILE"
+done
+
+
 
         # Compare directories after Upload
         compare_directories $ROOT_DIRPATH_SERVER $CLIENT_SERVER_PATH
     done
 done
+
 
 # Comparisons
 compare_directories $ROOT_DIRPATH_SERVER $CLIENT_SERVER_PATH

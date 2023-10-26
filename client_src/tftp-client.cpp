@@ -963,22 +963,22 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
 bool parseTFTPParameters(const std::string &Oparamstring, TFTPOparams &Oparams)
 {
 
-    // Rozdělení řetězce parametrů na jednotlivé páry název=hodnota
+    // Split the string parameters into individual name-value pairs
     std::istringstream Oparamstream(Oparamstring);
-    std::string paramPair;
+    std::string paramName;
+    std::string paramValue;
 
-    size_t equalPos = Oparamstring.find('=');
-    if (equalPos != std::string::npos)
+    // Split based on space
+    Oparamstream >> paramName >> paramValue;
+
+    if (!paramName.empty() && !paramValue.empty())
     {
-        std::string paramName = Oparamstring.substr(0, equalPos);
-        std::string paramValue = Oparamstring.substr(equalPos + 1);
-
         if (paramName == "blksize")
         {
             option_blksize_used = true;
 
             int blksize = std::stoi(paramValue);
-            if (blksize >= 8 && blksize <= 65464) // Kontrola platného rozsahu blksize
+            if (blksize >= 8 && blksize <= 65464) // Check valid range for blksize
             {
                 Oparams.blksize = blksize;
             }
@@ -1005,7 +1005,6 @@ bool parseTFTPParameters(const std::string &Oparamstring, TFTPOparams &Oparams)
         }
         else if (paramName == "tsize")
         {
-
             option_tsize_used = true;
 
             int transfersize = std::stoi(paramValue);
@@ -1024,6 +1023,11 @@ bool parseTFTPParameters(const std::string &Oparamstring, TFTPOparams &Oparams)
             std::cerr << "Neznámý parametr: " << paramName << std::endl;
             return false;
         }
+    }
+    else
+    {
+        std::cerr << "Nesprávný formát parametrů." << std::endl;
+        return false;
     }
 
     options_used = true;
