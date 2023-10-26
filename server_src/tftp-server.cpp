@@ -70,9 +70,8 @@ bool sendDataPacket(int sockfd, sockaddr_in &clientAddr, uint16_t blockNum, cons
 {
     uint16_t opcode = htons(DATA);
     uint16_t blockNumNetwork = htons(blockNum);
-    uint16_t blockSizeOption = htons(0x0004); // Blocksize Option
 
-    size_t packetSize = sizeof(uint16_t) * 3 + dataSize; // 3 for opcode, blockNum, and blockSizeOption
+    size_t packetSize = sizeof(uint16_t) * 2 + dataSize; // 3 for opcode, blockNum, and blockSizeOption
 
     std::vector<uint8_t> dataPacket(packetSize);
 
@@ -80,7 +79,6 @@ bool sendDataPacket(int sockfd, sockaddr_in &clientAddr, uint16_t blockNum, cons
     memcpy(dataPacket.data(), &opcode, sizeof(uint16_t));
     memcpy(dataPacket.data() + sizeof(uint16_t), &blockNumNetwork, sizeof(uint16_t));
     memcpy(dataPacket.data() + sizeof(uint16_t) * 2, data, dataSize);
-    memcpy(dataPacket.data() + sizeof(uint16_t) * 2 + dataSize, &blockSizeOption, sizeof(uint16_t));
 
     ssize_t sentBytes = sendto(sockfd, dataPacket.data(), packetSize, 0, (struct sockaddr *)&clientAddr, sizeof(clientAddr));
 

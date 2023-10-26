@@ -886,7 +886,6 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
                 if (percentageReceived >= 100)
                 {
                     percentageReceived = 100;
-                    transferComplete = true;
                 }
 
                 // Print the percentage

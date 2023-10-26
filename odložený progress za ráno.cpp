@@ -10,7 +10,7 @@
 #include <csignal>
 
 // TODO dodělat timeout option
-//      ověřit chybový stavy
+//      ověřit chybový stavy -- něco už v 
 //      code review
 //      check RFC
 //      ověřit na referenčním stroji
