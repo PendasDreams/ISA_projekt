@@ -346,6 +346,7 @@ int SendFile(int sock, const std::string &hostname, int port, const std::string 
     double percentageReceived;
 
     bool lastnullpacket = false;
+    int lastbytesread;
 
     if (option_tsize_used)
     {
@@ -359,6 +360,7 @@ int SendFile(int sock, const std::string &hostname, int port, const std::string 
 
         if (bytesRead > 0)
         {
+            lastbytesread = bytesRead;
 
             if (!sendData(sock, hostname, serverPort, std::string(buffer, bytesRead)))
             {
@@ -418,7 +420,7 @@ int SendFile(int sock, const std::string &hostname, int port, const std::string 
         }
         else
         {
-            if (bytesRead == 0)
+            if (bytesRead == 0 && lastbytesread == params.blksize)
             {
                 lastnullpacket = true; // Nastavit na true, pokud byla poslední data o velikosti 0
             }

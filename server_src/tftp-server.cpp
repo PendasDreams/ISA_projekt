@@ -12,7 +12,6 @@
 #include <filesystem>
 
 // TODO
-//      posílání souboru který vychází přesně tak poslední packt 0
 //      pořešit všude timeout
 //      ověřit chybový stavy client
 //      code review
@@ -273,6 +272,7 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filena
     uint16_t blockNum = 1;
 
     bool lastnullpacket = false;
+    int lastbytesread;
 
     while (true)
     {
@@ -283,6 +283,7 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filena
 
         if (bytesRead > 0)
         {
+            lastbytesread = bytesRead;
             int retries = 0;
             const int maxRetries = 4; // As per RFC specification
             bool ackReceived = false;
@@ -323,8 +324,7 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filena
         }
         else
         {
-            std::cerr << "No more data to send" << std::endl;
-            if (bytesRead == 0)
+            if (bytesRead == 0 && lastbytesread == params.blksize)
             {
                 lastnullpacket = true; // Nastavit na true, pokud byla poslední data o velikosti 0
             }
@@ -484,12 +484,6 @@ bool receiveDataPacket(int sockfd, sockaddr_in &clientAddr, sockaddr_in &serverA
         {
             // Calculate the size of the data portion in this packet
             uint16_t dataSize = bytesReceived - sizeof(uint16_t) * 2;
-
-            if (dataSize <= 0)
-            {
-                std::cerr << "Received an empty DATA packet for block " << blockNum << std::endl;
-                return false;
-            }
 
             // Write the data to the file
             file.write(reinterpret_cast<const char *>(dataPacket.data() + sizeof(uint16_t) * 2), dataSize);
