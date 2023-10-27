@@ -317,10 +317,6 @@ int SendFile(int sock, const std::string &hostname, int port, const std::string 
     // Send WRQ packet with optional parameters (OACK) and retry up to 4 times if no ACK/OACK is received
     while (!wrqAckReceived && writeRequestRetries < 4)
     {
-        // if (!sendWriteRequest(sock, hostname, port, localFilePath, mode, options, params))
-        // {
-        //     return 1;
-        // }
 
         sendTFTPRequest(WRITE_REQUEST, sock, hostname, port, localFilePath, mode, params);
 
@@ -348,6 +344,8 @@ int SendFile(int sock, const std::string &hostname, int port, const std::string 
     long long totalSize;
     long long dataReceivedSoFar;
     double percentageReceived;
+
+    bool lastnullpacket = false;
 
     if (option_tsize_used)
     {
@@ -420,9 +418,46 @@ int SendFile(int sock, const std::string &hostname, int port, const std::string 
         }
         else
         {
-
+            if (bytesRead == 0)
+            {
+                lastnullpacket = true; // Nastavit na true, pokud byla poslední data o velikosti 0
+            }
             // No more data to send
             transferComplete = true;
+        }
+    }
+
+    if (lastnullpacket)
+    {
+        if (!sendData(sock, hostname, serverPort, ""))
+        {
+            return 1;
+        }
+
+        // Čekat na potvrzení pro poslední prázdný DATA packet
+        int numRetries = 0;
+        bool ackReceived = false;
+        while (!ackReceived && numRetries < max_retries)
+        {
+            ackReceived = receiveAck(sock, blockID, serverPort, params, receivedOptions);
+            if (!ackReceived)
+            {
+                // Pokud ACK nebyl přijat včas, pokusit se znovu odeslat prázdný DATA packet
+                std::cerr << "Warning: ACK not received for the last null DATA packet, retrying..." << std::endl;
+                if (!sendData(sock, hostname, serverPort, ""))
+                {
+                    return 1;
+                }
+                numRetries++;
+            }
+        }
+
+        if (!ackReceived)
+        {
+            // Prázdný DATA packet nebyl potvrzen ACK ani po opakovaných pokusech, ukončit program
+            std::cerr << "Error: Last null DATA packet not acknowledged after multiple retries, exiting..." << std::endl;
+            close(sock);
+            return 1;
         }
     }
 

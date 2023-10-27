@@ -13,7 +13,8 @@
 
 // TODO
 //      posílání souboru který vychází přesně tak poslední packt 0
-//      ověřit chybový stavy -- něco už v chatgpt
+//      pořešit všude timeout
+//      ověřit chybový stavy client
 //      code review
 //      check RFC
 //      ověřit na referenčním stroji
@@ -271,10 +272,11 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filena
 
     uint16_t blockNum = 1;
 
+    bool lastnullpacket = false;
+
     while (true)
     {
         // Read data into the buffer
-
         file.read(dataBuffer.data(), params.blksize); // Use dataBuffer.data() to get a pointer to the underlying array
 
         std::streamsize bytesRead = file.gcount();
@@ -287,7 +289,6 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filena
 
             while (retries < maxRetries)
             {
-
                 if (!sendDataPacket(sockfd, clientAddr, blockNum, dataBuffer.data(), bytesRead, bytesRead))
                 {
                     file.close();
@@ -316,7 +317,6 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filena
             if (bytesRead < params.blksize)
             {
                 std::cerr << "No more data to send" << std::endl;
-                break;
             }
 
             blockNum++;
@@ -324,9 +324,32 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filena
         else
         {
             std::cerr << "No more data to send" << std::endl;
+            if (bytesRead == 0)
+            {
+                lastnullpacket = true; // Nastavit na true, pokud byla poslední data o velikosti 0
+            }
             break;
         }
+
         dataBuffer.clear();
+    }
+
+    if (lastnullpacket)
+    {
+        // Odešlete poslední prázdný DATA packet
+        if (!sendDataPacket(sockfd, clientAddr, blockNum, nullptr, 0, 0))
+        {
+            file.close();
+            return false;
+        }
+
+        // Čekat na potvrzení pro poslední prázdný DATA packet
+        if (!receiveAck(sockfd, blockNum, clientAddr, params.timeout))
+        {
+            std::cerr << "Failed to receive ACK for the last null DATA packet" << std::endl;
+            file.close();
+            return false;
+        }
     }
 
     options_map.clear();
