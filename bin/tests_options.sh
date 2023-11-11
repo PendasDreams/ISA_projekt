@@ -20,7 +20,6 @@ FAILED_TESTS=()
 # Options for testing
 BLKSIZES=("800" "1600" "3200")
 TIMEOUTS=("3" "5" "7")
-TSIZE="0"
 
 run_tftp_client() {
     echo "Running: ./tftp-client $@"
@@ -64,7 +63,7 @@ done
 for BLKSIZE in "${BLKSIZES[@]}"; do
     for TIMEOUT in "${TIMEOUTS[@]}"; do
         # Options are passed in the desired format now
-        OPTIONS="--option \"blksize $BLKSIZE\" --option \"timeout $TIMEOUT\" --option \"tsize $TSIZE\""
+        OPTIONS="--option \"blksize $BLKSIZE\" --option \"timeout $TIMEOUT\""
 
 # Download
 echo -e "\nProcessing download with options: $OPTIONS"
