@@ -401,6 +401,7 @@ int SendFile(int sock, const std::string &hostname, int port, const std::string 
             // Pokud klient nepřijme ACK v požadovaném čase, pokusí se znovu odeslat datový paket
             int numRetries = 0;
             bool ackReceived = false;
+
             while (!ackReceived && numRetries < max_retries)
             {
 
@@ -787,12 +788,14 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
     long long dataReceivedSoFar;
     double percentageReceived;
 
-    int readRequestRetries = 0;
+    int RequestRetries = 0;
     bool rrqAckReceived = false;
 
     setSocketTimeout(sock, params.timeout_max);
 
     uint16_t blockID = 0; // Initialize the block ID
+
+    sendTFTPRequest(READ_REQUEST, sock, hostname, port, remoteFilePath, mode, params);
 
     while (!transferComplete)
     {
@@ -802,23 +805,23 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
 
         if (options_used == true && firstOACK == false)
         {
+
             firstOACK = true;
 
-            while (!rrqAckReceived && readRequestRetries < 4)
+            while (!rrqAckReceived && RequestRetries < 4)
             {
-
-                sendTFTPRequest(READ_REQUEST, sock, hostname, port, remoteFilePath, mode, params);
 
                 rrqAckReceived = receiveAck(sock, blockID, serverPort, params, receivedOptions);
 
                 if (!rrqAckReceived)
                 {
+                    sendTFTPRequest(READ_REQUEST, sock, hostname, port, remoteFilePath, mode, params);
                     std::cerr << "Warning: ACK not received after RRQ, retrying..." << std::endl;
-                    readRequestRetries++;
+                    RequestRetries++;
                 }
             }
 
-            if (readRequestRetries == 4)
+            if (RequestRetries == 4)
             {
                 std::cerr << "Error: Failed to receive ACK or OACK after multiple WRQ attempts. Exiting..." << std::endl;
                 handleError(sock, hostname, port, 0, 0, "Failed to receive ACK or OACK after WRQ");
@@ -835,7 +838,7 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
             }
         }
         //
-        if (options_used == true)
+        if (options_used)
         {
 
             // Send an ACK packet before receiving DATA
@@ -848,15 +851,44 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
                 return 1;
             }
 
-            // Receive a DATA packet and store the data in 'data' with block size option
-            if (!receiveData(sock, receivedBlockID, data, params, hostname))
+            int numRetriesRecvData = 0;
+            bool dataReceived = false;
+
+            while (!dataReceived && numRetriesRecvData < 4)
             {
-                std::cerr << "Error: Failed to receive DATA." << std::endl;
+
+                dataReceived = receiveData(sock, receivedBlockID, data, params, hostname);
+                if (!dataReceived)
+                {
+                    // Pokud ACK nebyl přijat včas, pokusit se znovu odeslat datový paket
+                    std::cout << "Warning: DATA not received for block " << blockID << ", retrying..." << std::endl;
+
+                    if (!sendAck(sock, blockID, hostname, serverPort, params))
+                    {
+                        std::cout << "Error: Failed to send ACK before receiving DATA." << std::endl;
+                        close(sock);                   // Close the socket on error
+                        outputFile.close();            // Close the output file
+                        remove(localFilePath.c_str()); // Delete the partially downloaded file
+                        return 1;
+                    };
+
+                    numRetriesRecvData++;
+                }
+            }
+
+            if (!dataReceived)
+            {
+                // Datový paket nebyl potvrzen ACK ani po opakovaných pokusech, ukončit program
+                std::cerr << "Error: Failed to receive DATAss." << std::endl;
                 close(sock);                   // Close the socket on error
                 outputFile.close();            // Close the output file
                 remove(localFilePath.c_str()); // Delete the partially downloaded file
                 return 1;
+                std::cerr << "Error: Data packet not acknowledged after multiple retries, exiting..." << std::endl;
+
+                return 1;
             }
+
             if (option_tsize_used)
             {
                 // Extract the total size (tsize) from the receivedOptions map
@@ -877,6 +909,7 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
         }
         else
         {
+            std::cerr << "werehere..." << std::endl;
 
             // Receive a DATA packet and store the data in 'data' with block size option
 

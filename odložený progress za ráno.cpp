@@ -1,811 +1,1139 @@
-#include <iostream>
-#include <fstream>
-#include <vector>
-#include <cstring>
-#include <arpa/inet.h>
-#include <sys/socket.h>
-#include <unistd.h>
-#include <map>
-#include <iomanip>
-#include <csignal>
+#include "tftp-client.h"
 
-// TODO dodělat timeout option
-//      ověřit chybový stavy -- něco už v 
-//      code review
-//      check RFC
-//      ověřit na referenčním stroji
-//      dokumentace
-
-bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr, int timeout);
-
-// TFTP opcodes
-const uint16_t RRQ = 1;
-const uint16_t WRQ = 2;
-const uint16_t DATA = 3;
-const uint16_t ACK = 4;
-const uint16_t ERROR = 5;
-const uint16_t OACK = 6;
-
-// Maximum data packet size
-const size_t MAX_DATA_SIZE = 514;
-
-// TFTP Error Codes
-const uint16_t ERROR_UNDEFINED = 0;
-const uint16_t ERROR_FILE_NOT_FOUND = 1;
-const uint16_t ERROR_ACCESS_VIOLATION = 2;
-
-// Structure to represent a TFTP packet
-struct TFTPPacket
+bool isAscii(const std::string &fileName)
 {
-    uint16_t opcode;
-    char data[MAX_DATA_SIZE];
-};
-
-bool lastblockfromoutside = false;
-bool blocksizeOptionUsed = false;
-bool timeoutOptionUsed = false;
-bool transfersizeOptionUsed = false;
-
-struct TFTPOparams
-{
-    uint16_t blksize;
-    uint16_t timeout;
-    int transfersize;
-};
-
-// Function to send an error packet
-void sendError(int sockfd, uint16_t errorCode, const std::string &errorMsg, sockaddr_in &clientAddr)
-{
-    TFTPPacket errorPacket;
-    errorPacket.opcode = htons(ERROR);
-    memcpy(errorPacket.data, &errorCode, sizeof(uint16_t));
-    strcpy(errorPacket.data + sizeof(uint16_t), errorMsg.c_str());
-
-    sendto(sockfd, &errorPacket, sizeof(uint16_t) + errorMsg.size() + 1, 0, (struct sockaddr *)&clientAddr, sizeof(clientAddr));
-}
-
-bool sendDataPacket(int sockfd, sockaddr_in &clientAddr, uint16_t blockNum, const char *data, size_t dataSize, uint16_t blockSize)
-{
-    uint16_t opcode = htons(DATA);
-    uint16_t blockNumNetwork = htons(blockNum);
-    uint16_t blockSizeOption = htons(0x0004); // Blocksize Option
-
-    size_t packetSize = sizeof(uint16_t) * 3 + dataSize; // 3 for opcode, blockNum, and blockSizeOption
-
-    std::vector<uint8_t> dataPacket(packetSize);
-
-    // Copy the opcode, block number, and data into the packet
-    memcpy(dataPacket.data(), &opcode, sizeof(uint16_t));
-    memcpy(dataPacket.data() + sizeof(uint16_t), &blockNumNetwork, sizeof(uint16_t));
-    memcpy(dataPacket.data() + sizeof(uint16_t) * 2, data, dataSize);
-    memcpy(dataPacket.data() + sizeof(uint16_t) * 2 + dataSize, &blockSizeOption, sizeof(uint16_t));
-
-    ssize_t sentBytes = sendto(sockfd, dataPacket.data(), packetSize, 0, (struct sockaddr *)&clientAddr, sizeof(clientAddr));
-
-    if (sentBytes == -1)
+    // Zjistěte příponu souboru
+    size_t dotPos = fileName.find_last_of('.');
+    if (dotPos == std::string::npos)
     {
-        std::cerr << "Error sending DATA packet for block " << blockNum << std::endl;
-        return false;
+        // std::cerr << "Invalid file name: " << fileName << std::endl;
+        return false; // Neplatný název souboru
     }
 
+    std::string fileExtension = fileName.substr(dotPos + 1);
+
+    // Porovnejte příponu s podporovanými režimy TFTP
+    if (fileExtension == "txt" || fileExtension == "html" || fileExtension == "xml")
+    {
+        // std::cerr << "file is ascii " << fileName << std::endl;
+
+        return true; // Textový režim ('netascii')
+    }
+    else
+    {
+        // std::cerr << "file is octet " << fileName << std::endl;
+
+        return false; // Binární režim ('octet')
+    }
+}
+
+std::string determineMode(const std::string &filePath)
+{
+
+    if (isAscii(filePath))
+    {
+        return "netascii"; // Pokud jsou to ASCII data, použijte "netascii" režim
+    }
+    else
+    {
+        return "octet"; // Pokud jsou to binární data, použijte "octet" režim
+    }
+}
+
+// Function to receive ACK (Acknowledgment) packet and capture the server's port
+
+std::string hexStringToCharString(const std::string &hexStr)
+{
+    std::string charStr;
+    for (size_t i = 0; i < hexStr.length(); i += 2)
+    {
+        // Extract two characters from the hex string
+        std::string hexPair = hexStr.substr(i, 2);
+
+        // Convert the hex pair to an integer
+        int hexValue = std::stoi(hexPair, nullptr, 16);
+
+        // Convert the integer to a char and append it to the result
+        charStr += static_cast<char>(hexValue);
+    }
+    return charStr;
+}
+
+// Function to set socket timeout
+bool setSocketTimeout(int sock, int timeout)
+{
+    struct timeval tv;
+    tv.tv_sec = timeout;
+    tv.tv_usec = 0;
+    if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0)
+    {
+        std::cerr << "Error: Failed to set socket timeout." << std::endl;
+        return false;
+    }
     return true;
 }
 
-// Function to send an OACK packet
-bool sendOACK(int sockfd, sockaddr_in &clientAddr, std::map<std::string, int> &options_map, TFTPOparams &params, std::streampos filesize)
+bool isBinaryFormat(const std::string &filename)
 {
-
-    std::vector<uint8_t> oackBuffer;
-
-    // Přidej opcode do vektoru
-    uint16_t opcode = htons(OACK);
-    oackBuffer.insert(oackBuffer.end(), reinterpret_cast<uint8_t *>(&opcode), reinterpret_cast<uint8_t *>(&opcode) + sizeof(uint16_t));
-
-    // Přidej "blksize" option, pokud je k dispozici v options_map
-    auto blksizeIt = options_map.find("blksize");
-    if (blksizeIt != options_map.end())
+    // Získej koncovku souboru z názvu
+    size_t dotPosition = filename.find_last_of('.');
+    if (dotPosition == std::string::npos)
     {
-        const char *optionName = "blksize";
-        oackBuffer.insert(oackBuffer.end(), optionName, optionName + strlen(optionName) + 1); // Včetně nulového znaku
-
-        // Přidej hodnotu volby (jako text) do vektoru
-        std::string blockSizeStr = std::to_string(params.blksize);
-        oackBuffer.insert(oackBuffer.end(), blockSizeStr.begin(), blockSizeStr.end());
-        oackBuffer.push_back('\0'); // Přidej nulový znak za hodnotou
+        // Pokud nemáme koncovku, nelze určit formát, takže použijeme octet mode
+        return true;
     }
 
-    // Přidej "timeout" option, pokud je k dispozici v options_map
-    auto timeoutIt = options_map.find("timeout");
-    if (timeoutIt != options_map.end())
-    {
-        const char *optionName = "timeout";
-        oackBuffer.insert(oackBuffer.end(), optionName, optionName + strlen(optionName) + 1); // Včetně nulového znaku
+    std::string fileExtension = filename.substr(dotPosition + 1);
 
-        // Přidej hodnotu volby (jako text) do vektoru
-        std::string timeoutStr = std::to_string(params.timeout);
-        oackBuffer.insert(oackBuffer.end(), timeoutStr.begin(), timeoutStr.end());
-        oackBuffer.push_back('\0'); // Přidej nulový znak za hodnotou
-    }
+    // Převeď koncovku na malá písmena pro jednodušší porovnání
+    std::transform(fileExtension.begin(), fileExtension.end(), fileExtension.begin(), ::tolower);
 
-    auto tsizeIt = options_map.find("tsize");
-    if (tsizeIt != options_map.end())
-    {
+    // Definuj seznam koncovek, které budeme považovat za binární formáty
+    std::vector<std::string> binaryExtensions = {"bin", "jpg", "png", "exe"};
 
-        params.transfersize = filesize;
-        const char *optionName = "tsize";
-        oackBuffer.insert(oackBuffer.end(), optionName, optionName + strlen(optionName) + 1); // Včetně nulového znaku
-
-        // Přidej hodnotu volby (jako text) do vektoru
-        std::string tsizeStr = std::to_string(params.transfersize);
-        oackBuffer.insert(oackBuffer.end(), tsizeStr.begin(), tsizeStr.end());
-        oackBuffer.push_back('\0'); // Přidej nulový znak za hodnotou
-    }
-
-    // Po dokončení vytvoření vektoru můžete poslat OACK packet
-    ssize_t sentBytes = sendto(sockfd, oackBuffer.data(), oackBuffer.size(), 0, (struct sockaddr *)&clientAddr, sizeof(clientAddr));
-
-    // Check for errors
-    if (sentBytes == -1)
-    {
-        std::cerr << "Error sending OACK packet" << std::endl;
-        return false;
-    }
-
-    return true;
+    // Porovnej koncovku s seznamem binárních koncovek
+    return std::find(binaryExtensions.begin(), binaryExtensions.end(), fileExtension) != binaryExtensions.end();
 }
 
-// Function to send a file in DATA packets
-bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filename, std::map<std::string, int> &options_map, TFTPOparams &params)
+// Function to handle errors
+void handleError(int sock, const std::string &hostname, int srcPort, int dstPort, uint16_t errorCode, const std::string &errorMsg)
 {
-    std::ifstream file;
+    // Create an ERROR packet
+    uint8_t errorBuffer[4 + errorMsg.length() + 1]; // +1 for null-terminated string
+    errorBuffer[0] = 0;                             // High byte of opcode (0 for ERROR)
+    errorBuffer[1] = 5;                             // Low byte of opcode (5 for ERROR)
+    errorBuffer[2] = (errorCode >> 8) & 0xFF;       // High byte of error code
+    errorBuffer[3] = errorCode & 0xFF;              // Low byte of error code
 
-    file.open(filename, std::ios::binary);
+    // Add the error message to the buffer
+    std::memcpy(errorBuffer + 4, errorMsg.c_str(), errorMsg.length());
+    errorBuffer[4 + errorMsg.length()] = '\0'; // Null-terminated string
 
-    if (!file)
+    // Create sockaddr_in structure for the remote server (serverAddr)
+    sockaddr_in serverAddr;
+    std::memset(&serverAddr, 0, sizeof(serverAddr));
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(dstPort);
+    inet_pton(AF_INET, hostname.c_str(), &(serverAddr.sin_addr));
+
+    // Send ERROR packet
+    ssize_t sentBytes = sendto(sock, errorBuffer, sizeof(errorBuffer), 0, (struct sockaddr *)&serverAddr, sizeof(serverAddr));
+    if (sentBytes == -1)
     {
-        sendError(sockfd, ERROR_FILE_NOT_FOUND, "File not found", clientAddr);
+        std::cerr << "Error: Failed to send ERROR." << std::endl;
+    }
+
+    std::cerr << "ERROR " << hostname << ":" << srcPort << ":" << dstPort << " " << errorCode << " \"" << errorMsg << "\"" << std::endl;
+}
+
+// Function to send WRQ (Write Request) packet with optional parameters (OACK)
+bool receiveAck(int sock, uint16_t &receivedBlockID, int &serverPort, TFTPOparams &params, std::map<std::string, std::string> &receivedOptions)
+{
+    // Create a buffer to receive the ACK or OACK packet
+    uint8_t packetBuffer[516]; // Adjust the buffer size as needed for maximum possible packet size
+
+    // Create sockaddr_in structure to store the sender's address
+    sockaddr_in senderAddr;
+    socklen_t senderAddrLen = sizeof(senderAddr);
+
+    std::map<std::string, std::string> recieved_options;
+
+    // Receive the ACK or OACK packet and capture the sender's address
+    ssize_t receivedBytes = recvfrom(sock, packetBuffer, sizeof(packetBuffer), 0, (struct sockaddr *)&senderAddr, &senderAddrLen);
+    if (receivedBytes == -1)
+    {
+        std::cerr << "Error: Failed to receive packet." << std::endl;
         return false;
     }
 
-    // Seek to the end of the file
-    file.seekg(0, std::ios::end);
-
-    // Get the position of the file pointer, which is now at the end of the file
-    std::streampos filesize = file.tellg();
-
-    std::cout << "Size of the file: " << filesize << " bytes" << std::endl;
-
-    file.seekg(0, std::ios::beg);
-
-    // If "blksize" option is found in the map, use the specified block size
-    if (blocksizeOptionUsed || timeoutOptionUsed || transfersizeOptionUsed)
+    // Check if the received packet is an ACK or OACK packet
+    if (receivedBytes < 4)
     {
-        int retries = 0;
-        const int maxRetries = 4; // As per RFC specification
-
-        bool ackReceived = false;
-
-        while (retries < maxRetries)
-        {
-            if (!sendOACK(sockfd, clientAddr, options_map, params, filesize))
-            {
-                continue;
-            }
-
-            if (receiveAck(sockfd, 0, clientAddr, params.timeout))
-            {
-                ackReceived = true;
-                break;
-            }
-            else
-            {
-                retries++;
-            }
-        }
-
-        if (!ackReceived)
-        {
-            std::cerr << "Failed to receive ACK after multiple retries" << std::endl;
-            file.close();
-            return false;
-        }
+        std::cerr << "Error: Received packet is too short to be an ACK or OACK." << std::endl;
+        return false;
     }
 
-    std::vector<char> dataBuffer(params.blksize); // Use a vector with maximum size
-
-    uint16_t blockNum = 1;
-
-    while (true)
+    uint16_t opcode = (packetBuffer[0] << 8) | packetBuffer[1];
+    if (opcode != 4 && opcode != 6)
     {
-        // Read data into the buffer
+        std::cerr << "Error: Received packet is not an ACK or OACK." << std::endl;
+        return false;
+    }
 
-        file.read(dataBuffer.data(), params.blksize); // Use dataBuffer.data() to get a pointer to the underlying array
-        std::cerr << "befor readig data" << std::endl;
+    // Parse the received block ID from the ACK packet
+    receivedBlockID = (packetBuffer[2] << 8) | packetBuffer[3];
 
-        std::streamsize bytesRead = file.gcount();
+    // Capture the server's port from the sender's address
+    serverPort = ntohs(senderAddr.sin_port);
 
-        if (bytesRead > 0)
+    if (opcode == 6)
+    {
+        receivedBlockID = 0;
+        // This is an OACK packet, parse options
+        size_t pos = 2;
+
+        while (pos < receivedBytes)
         {
-            int retries = 0;
-            const int maxRetries = 4; // As per RFC specification
-            bool ackReceived = false;
+            std::string option;
+            std::string value;
 
-            while (retries < maxRetries)
+            // Read option until null terminator
+            while (pos < receivedBytes && packetBuffer[pos] != 0)
             {
+                option += (packetBuffer[pos]);
+                pos++;
+            }
 
-                if (!sendDataPacket(sockfd, clientAddr, blockNum, dataBuffer.data(), bytesRead, bytesRead))
+            // Skip null terminator
+            pos++;
+
+            // Read value until null terminator
+            while (pos < receivedBytes && packetBuffer[pos] != 0)
+            {
+                value += packetBuffer[pos];
+                pos++;
+            }
+
+            // Skip null terminator
+            pos++;
+
+            // Store option and value in the receivedOptions map
+            recieved_options[option] = value;
+        }
+
+        for (const auto &pair : recieved_options)
+        {
+
+            if (pair.first == "blksize")
+            {
+                int intblksize = std::stoi(pair.second);
+
+                if (intblksize > params.blksize)
                 {
-                    file.close();
+
+                    std::cerr << "Error: Received blksize option does not match the requested value." << std::endl;
+                    std::cerr << "Error: Requested value from server: " << pair.second << std::endl;
+                    std::cerr << "Error: Requested value from client: " << std::to_string(params.blksize) << std::endl;
                     return false;
-                }
-
-                // Wait for ACK for the sent block with timeout
-                if (receiveAck(sockfd, blockNum, clientAddr, params.timeout)) // Add timeout to receiveAck
-                {
-                    ackReceived = true;
-                    break;
                 }
                 else
                 {
-                    retries++;
+                    params.blksize = intblksize;
+                }
+            }
+            else if (pair.first == "timeout" && (pair.second != std::to_string(params.timeout_max)))
+            {
+                std::cerr << "Error: Received timeout option does not match the requested value." << std::endl;
+                std::cerr << "Error: Requested value from server: " << pair.second << std::endl;
+                std::cerr << "Error: Requested value from client: " << std::to_string(params.timeout_max) << std::endl;
+                return false;
+            }
+            else if (pair.first == "tsize")
+            {
+                receivedOptions["tsize"] = recieved_options["tsize"];
+
+                std::string tsize_str = recieved_options["tsize"];
+
+                int tsize = std::stoi(tsize_str);
+
+                params.transfersize = tsize;
+
+                struct statvfs stat;
+                if (statvfs("/", &stat) == 0)
+                {
+                    unsigned long long freeSpace = stat.f_frsize * stat.f_bfree;
+                    if (freeSpace < params.transfersize)
+                        std::cout << "Free space is: " << freeSpace / (1024 * 1024) << " MB "
+                                  << "You need" << receivedOptions["tsize"] << std::endl;
+                }
+                else
+                {
+                    std::cerr << "Error getting disk space information." << std::endl;
+                    // TODO ERROR SEND
+                }
+            }
+        }
+    }
+
+    std::cerr << (opcode == 4 ? "ACK" : "OACK") << " " << inet_ntoa(senderAddr.sin_addr) << ":" << ntohs(senderAddr.sin_port);
+
+    if (opcode == 6)
+    {
+        for (const auto &pair : recieved_options)
+        {
+            std::cerr << " " << pair.first << "=" << pair.second;
+        }
+        std::cerr << std::endl;
+    }
+    else
+    {
+        std::cerr << std::endl;
+    }
+
+    return true;
+}
+
+// Function to send DATA packet
+bool sendData(int sock, const std::string &hostname, int port, const std::string &data)
+{
+    // Increment the block ID for the next data block
+    blockID++;
+
+    // Create a buffer for the DATA packet
+    std::vector<uint8_t> dataBuffer;
+    dataBuffer.push_back(0);                     // High byte of opcode (0 for DATA)
+    dataBuffer.push_back(3);                     // Low byte of opcode (3 for DATA)
+    dataBuffer.push_back((blockID >> 8) & 0xFF); // High byte of block ID
+    dataBuffer.push_back(blockID & 0xFF);        // Low byte of block ID
+    dataBuffer.insert(dataBuffer.end(), data.begin(), data.end());
+
+    // Create sockaddr_in structure for the remote server (serverAddr)
+    sockaddr_in serverAddr;
+    std::memset(&serverAddr, 0, sizeof(serverAddr));
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(port);
+    inet_pton(AF_INET, hostname.c_str(), &(serverAddr.sin_addr));
+
+    // Send DATA packet
+    ssize_t sentBytes = sendto(sock, dataBuffer.data(), dataBuffer.size(), 0, (struct sockaddr *)&serverAddr, sizeof(serverAddr));
+    if (sentBytes == -1)
+    {
+        std::cerr << "Error: Failed to send DATA." << std::endl;
+        return false;
+    }
+    std::cout << std::dec;
+
+    // std::cerr << "Sent DATA packet with size: " << dataBuffer.size() << " bytes, block ID: " << blockID << std::endl; // Print the size and block ID
+
+    return true;
+}
+
+// Function to send a file to the server or upload from stdin
+int SendFile(int sock, const std::string &hostname, int port, const std::string &localFilePath, const std::string &remoteFilePath, std::string &mode, const std::string &options, TFTPOparams &params)
+{
+    std::istream *inputStream;
+    std::ifstream file;
+
+    std::string userInput;
+    std::cout << "Zadejte řádek textu: ";
+    std::getline(std::cin, userInput);
+
+    std::cout << "Zadali jste: " << userInput << std::endl;
+
+    file.open(userInput, std::ios::binary);
+
+    if (!file)
+    {
+        std::cerr << "Error: Failed to open file for reading sendfile." << std::endl;
+        close(sock); // Close the socket on error
+        return 1;
+    }
+    inputStream = &file;
+
+    // Determine the mode based on the file content
+    mode = determineMode(remoteFilePath);
+
+    const size_t maxDataSize = params.blksize; // Max data size in one DATA packet
+    char buffer[maxDataSize];                  // Buffer for reading data from the file or stdin
+
+    int serverPort = 0; // Variable to capture the server's port
+
+    int writeRequestRetries = 0;
+    bool wrqAckReceived = false;
+    setSocketTimeout(sock, params.timeout_max);
+
+    std::map<std::string, std::string> receivedOptions;
+
+    // Send WRQ packet with optional parameters (OACK) and retry up to 4 times if no ACK/OACK is received
+    while (!wrqAckReceived && writeRequestRetries < 4)
+    {
+
+        sendTFTPRequest(WRITE_REQUEST, sock, hostname, port, localFilePath, mode, params);
+
+        wrqAckReceived = receiveAck(sock, blockID, serverPort, params, receivedOptions);
+
+        if (!wrqAckReceived)
+        {
+            std::cerr << "Warning: ACK not received after WRQ, retrying..." << std::endl;
+            writeRequestRetries++;
+        }
+    }
+
+    if (writeRequestRetries == 4)
+    {
+        std::cerr << "Error: Failed to receive ACK or OACK after multiple WRQ attempts. Exiting..." << std::endl;
+        handleError(sock, hostname, port, 0, 0, "Failed to receive ACK or OACK after WRQ");
+        close(sock);
+        return 1;
+    }
+
+    bool isOACK = (blockID == 0);
+
+    bool transferComplete = false;
+    int max_retries = 4;
+
+    long long totalSize;
+    long long dataReceivedSoFar;
+    double percentageReceived;
+
+    bool lastnullpacket = false;
+    int lastbytesread;
+
+    if (option_tsize_used)
+    {
+        totalSize = params.transfersize; // Convert string to long long
+    }
+
+    while (!transferComplete)
+    {
+        inputStream->read(buffer, maxDataSize);
+        std::streamsize bytesRead = inputStream->gcount();
+
+        if (bytesRead > 0)
+        {
+            lastbytesread = bytesRead;
+
+            if (!sendData(sock, hostname, serverPort, std::string(buffer, bytesRead)))
+            {
+                return 1;
+            }; // Odeslat data na server
+
+            // Pokud klient nepřijme ACK v požadovaném čase, pokusí se znovu odeslat datový paket
+            int numRetries = 0;
+            bool ackReceived = false;
+
+            while (!ackReceived && numRetries < max_retries)
+            {
+
+                ackReceived = receiveAck(sock, blockID, serverPort, params, receivedOptions);
+                if (!ackReceived)
+                {
+                    // Pokud ACK nebyl přijat včas, pokusit se znovu odeslat datový paket
+                    std::cerr << "Warning: ACK not received for block " << blockID << ", retrying..." << std::endl;
+
+                    if (!sendData(sock, hostname, serverPort, std::string(buffer, bytesRead)))
+                    {
+                        return 1;
+                    };
+                    numRetries++;
                 }
             }
 
             if (!ackReceived)
             {
-                std::cerr << "Failed to receive ACK for block " << blockNum << " after multiple retries" << std::endl;
-                file.close();
-                return false;
+                // Datový paket nebyl potvrzen ACK ani po opakovaných pokusech, ukončit program
+                std::cerr << "Error: Data packet not acknowledged after multiple retries, exiting..." << std::endl;
+                close(sock);
+                return 1;
             }
 
-            if (bytesRead < params.blksize)
+            if (option_tsize_used)
             {
-                std::cerr << "No more data to send" << std::endl;
-                break;
+                // Extract the total size (tsize) from the receivedOptions map
+
+                dataReceivedSoFar = blockID * params.blksize;
+
+                // Calculate the percentage of data received
+                percentageReceived = ((double)dataReceivedSoFar / totalSize) * 100;
+
+                if (percentageReceived > 100)
+                {
+                    percentageReceived = 100;
+                }
+
+                // Print the percentage
+                std::cout << "Send: " << percentageReceived << "% of total data." << std::endl;
             }
 
-            blockNum++;
+            if (bytesRead < maxDataSize) // If we read less than the max data size, we're done.
+            {
+                transferComplete = true;
+            }
         }
         else
         {
-            std::cerr << "No more data to send" << std::endl;
-            break;
+            if (bytesRead == 0 && lastbytesread == params.blksize)
+            {
+                lastnullpacket = true; // Nastavit na true, pokud byla poslední data o velikosti 0
+            }
+            // No more data to send
+            transferComplete = true;
         }
-        dataBuffer.clear();
     }
 
-    options_map.clear();
-    file.close();
-    return true;
-}
-// Function to receive an ACK packet
-bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr, int timeout)
-{
-    TFTPPacket ackPacket;
-    memset(&ackPacket, 0, sizeof(TFTPPacket));
-
-    socklen_t clientAddrLen = sizeof(clientAddr);
-
-    // Set the timeout for recvfrom
-    struct timeval tv;
-    tv.tv_sec = timeout;
-    tv.tv_usec = 0;
-    if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0)
+    if (lastnullpacket)
     {
-        std::cerr << "Failed to set socket timeout" << std::endl;
+        if (!sendData(sock, hostname, serverPort, ""))
+        {
+            return 1;
+        }
+
+        // Čekat na potvrzení pro poslední prázdný DATA packet
+        int numRetries = 0;
+        bool ackReceived = false;
+        while (!ackReceived && numRetries < max_retries)
+        {
+            ackReceived = receiveAck(sock, blockID, serverPort, params, receivedOptions);
+            if (!ackReceived)
+            {
+                // Pokud ACK nebyl přijat včas, pokusit se znovu odeslat prázdný DATA packet
+                std::cerr << "Warning: ACK not received for the last null DATA packet, retrying..." << std::endl;
+                if (!sendData(sock, hostname, serverPort, ""))
+                {
+                    return 1;
+                }
+                numRetries++;
+            }
+        }
+
+        if (!ackReceived)
+        {
+            // Prázdný DATA packet nebyl potvrzen ACK ani po opakovaných pokusech, ukončit program
+            std::cerr << "Error: Last null DATA packet not acknowledged after multiple retries, exiting..." << std::endl;
+            close(sock);
+            return 1;
+        }
+    }
+
+    // Close the file handle if opened
+    if (file.is_open())
+    {
+        file.close();
+    }
+    std::cout << "Upload file complete" << std::endl;
+
+    // Close the socket
+    close(sock);
+}
+
+//****************************************************************************************************************************
+//
+//
+// Recieving file
+//
+//
+//****************************************************************************************************************************
+
+// Function to send RRQ (Read Request) packet
+bool sendTFTPRequest(TFTPRequestType requestType, int sock, const std::string &hostname, int port, const std::string &filepath, const std::string &mode, TFTPOparams &params)
+{
+    std::vector<uint8_t> requestBuffer;
+    if (requestType == READ_REQUEST)
+    {
+        requestBuffer.push_back(0);
+        requestBuffer.push_back(1); // Opcode for RRQ
+    }
+    else
+    {
+        requestBuffer.push_back(0);
+        requestBuffer.push_back(2); // Opcode for WRQ
+    }
+
+    requestBuffer.insert(requestBuffer.end(), filepath.begin(), filepath.end());
+    requestBuffer.push_back(0);
+    requestBuffer.insert(requestBuffer.end(), mode.begin(), mode.end());
+    requestBuffer.push_back(0);
+
+    // Append the blocksize option from params if blksize > 0
+    if (option_blksize_used == true)
+    {
+        // Add "blksize" followed by a null terminator
+        std::string blocksizeOption = "blksize";
+        requestBuffer.insert(requestBuffer.end(), blocksizeOption.begin(), blocksizeOption.end());
+        requestBuffer.push_back(0); // Null-terminate "blksize"
+
+        // Add the value as a string followed by a null terminator
+        std::string blockSizeValue = std::to_string(params.blksize);
+        requestBuffer.insert(requestBuffer.end(), blockSizeValue.begin(), blockSizeValue.end());
+        requestBuffer.push_back(0); // Null-terminate the value
+    }
+
+    if (option_timeout_used == true)
+    {
+        // Add "timeout" followed by a null terminator
+        std::string timeoutOption = "timeout";
+        requestBuffer.insert(requestBuffer.end(), timeoutOption.begin(), timeoutOption.end());
+        requestBuffer.push_back(0); // Null-terminate "timeout"
+
+        // Add the value as a string followed by a null terminator
+        std::string timeoutValue = std::to_string(params.timeout_max);
+        requestBuffer.insert(requestBuffer.end(), timeoutValue.begin(), timeoutValue.end());
+        requestBuffer.push_back(0); // Null-terminate the value
+    }
+
+    if (option_tsize_used == true)
+    {
+        // Add "timeout" followed by a null terminator
+        std::string transfersizeOption = "tsize";
+        requestBuffer.insert(requestBuffer.end(), transfersizeOption.begin(), transfersizeOption.end());
+        requestBuffer.push_back(0); // Null-terminate "timeout"
+
+        // Add the value as a string followed by a null terminator
+        std::string TransfersizeValue = std::to_string(params.transfersize);
+        requestBuffer.insert(requestBuffer.end(), TransfersizeValue.begin(), TransfersizeValue.end());
+        requestBuffer.push_back(0); // Null-terminate the value
+    }
+
+    // Create sockaddr_in structure for the remote server
+    sockaddr_in serverAddr;
+    std::memset(&serverAddr, 0, sizeof(serverAddr));
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(port);
+    inet_pton(AF_INET, hostname.c_str(), &(serverAddr.sin_addr));
+
+    // Send the RRQ packet
+    ssize_t sentBytes = sendto(sock, requestBuffer.data(), requestBuffer.size(), 0, (struct sockaddr *)&serverAddr, sizeof(serverAddr));
+    if (sentBytes == -1)
+    {
+        std::cerr << "Error: Failed to send " << (requestType == READ_REQUEST ? "RRQ" : "WRQ") << " packet." << std::endl;
         return false;
     }
 
-    while (true)
+    std::cerr << (requestType == READ_REQUEST ? "RRQ " : "WRQ ") << hostname << ":" << port << " \"" << filepath << "\" " << mode;
+    if (option_timeout_used == true || option_blksize_used == true)
     {
-        ssize_t bytesReceived = recvfrom(sockfd, &ackPacket, sizeof(ackPacket), 0, (struct sockaddr *)&clientAddr, &clientAddrLen);
 
-        if (bytesReceived < 0)
+        if (option_timeout_used == true)
         {
-            if (errno == EAGAIN || errno == EWOULDBLOCK)
+            std::cerr << " timeout=" << params.timeout_max;
+        }
+        if (option_blksize_used == true)
+        {
+            std::cerr << " blksize=" << params.blksize;
+        }
+        if (option_tsize_used == true)
+        {
+            std::cerr << " tsize=" << params.transfersize;
+        }
+    }
+    std::cerr << std::endl;
+}
+
+bool receiveData(int sock, uint16_t &receivedBlockID, std::string &data, TFTPOparams &params, const std::string &hostname)
+{
+    // Create a buffer to receive the DATA packet
+    std::vector<uint8_t> dataBuffer(params.blksize + 4); // Max size of a DATA packet with room for header
+
+    // Create sockaddr_in structure to store the sender's address
+    sockaddr_in senderAddr;
+    socklen_t senderAddrLen = sizeof(senderAddr);
+
+    // Receive the DATA packet and capture the sender's address
+    ssize_t receivedBytes = recvfrom(sock, dataBuffer.data(), dataBuffer.size(), 0, (struct sockaddr *)&senderAddr, &senderAddrLen);
+    if (receivedBytes == -1)
+    {
+        std::cerr << "Error: Failed to receive DATA." << std::endl;
+        return false;
+    }
+
+    // Check if the received packet is a DATA packet
+    if (receivedBytes < 4 || dataBuffer[0] != 0 || dataBuffer[1] != 3)
+    {
+        std::cerr << "Error: Received packet is not a DATA packet." << std::endl;
+        return false;
+    }
+
+    // Parse the received block ID from the DATA packet
+    receivedBlockID = (dataBuffer[2] << 8) | dataBuffer[3];
+
+    // Extract the data from the packet (skip the first 4 bytes which are the header)
+    data.assign(dataBuffer.begin() + 4, dataBuffer.begin() + receivedBytes);
+
+    std::string srcIP = inet_ntoa(senderAddr.sin_addr);
+    uint16_t srcPort = ntohs(senderAddr.sin_port);
+
+    sockaddr_in localAddress;
+    socklen_t addressLength = sizeof(localAddress);
+    getsockname(sock, (struct sockaddr *)&localAddress, &addressLength);
+    uint16_t dstPort = ntohs(localAddress.sin_port);
+
+    // Print the desired format
+    std::cerr << "DATA " << srcIP << ":" << srcPort << ":" << dstPort << " " << receivedBlockID << std::endl;
+
+    // std::cerr << "Sent DATA packet with size: " << dataBuffer.size() << " bytes, block ID: " << blockID << std::endl; // Print the size and block ID
+
+    blockID = receivedBlockID + 1;
+
+    return true;
+}
+
+bool receiveData_without_options(int sock, uint16_t &receivedBlockID, std::string &data, TFTPOparams &params, const std::string &hostname)
+{
+    // Create a buffer to receive the DATA packet
+    std::vector<uint8_t> dataBuffer(1024); // Max size of a DATA packet
+
+    // Create sockaddr_in structure to store the sender's address
+    sockaddr_in senderAddr;
+    socklen_t senderAddrLen = sizeof(senderAddr);
+
+    // Receive the DATA packet and capture the sender's address
+    ssize_t receivedBytes = recvfrom(sock, dataBuffer.data(), dataBuffer.size(), 0, (struct sockaddr *)&senderAddr, &senderAddrLen);
+    if (receivedBytes == -1)
+    {
+        std::cerr << "Error: Failed to receive DATA." << std::endl;
+        return false;
+    }
+
+    // Check if the received packet is a DATA packet
+    if (receivedBytes < 4 || dataBuffer[0] != 0 || dataBuffer[1] != 3)
+    {
+        std::cerr << "Error: Received packet is not a DATA packet." << std::endl;
+        return false;
+    }
+
+    // Parse the received block ID from the DATA packet
+    receivedBlockID = (dataBuffer[2] << 8) | dataBuffer[3];
+
+    // Extract the data from the packet (skip the first 4 bytes which are the header)
+    data.assign(dataBuffer.begin() + 4, dataBuffer.begin() + receivedBytes);
+
+    // Create sockaddr_in structure for the remote server
+    sockaddr_in serverAddr;
+    std::memset(&serverAddr, 0, sizeof(serverAddr));
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = senderAddr.sin_port;
+    serverAddr.sin_addr = senderAddr.sin_addr;
+
+    // Send an ACK packet back to the server
+    std::vector<uint8_t> ackBuffer(4);
+    ackBuffer[0] = 0;                             // High byte of opcode (0 for ACK)
+    ackBuffer[1] = 4;                             // Low byte of opcode (4 for ACK)
+    ackBuffer[2] = (receivedBlockID >> 8) & 0xFF; // High byte of block ID
+    ackBuffer[3] = receivedBlockID & 0xFF;        // Low byte of block ID
+
+    ssize_t sentBytes = sendto(sock, ackBuffer.data(), ackBuffer.size(), 0, (struct sockaddr *)&serverAddr, sizeof(serverAddr));
+    if (sentBytes == -1)
+    {
+        std::cerr << "Error: Failed to send ACK." << std::endl;
+        return false;
+    }
+
+    sockaddr_in localAddr;
+    socklen_t addrLen = sizeof(localAddr);
+    if (getsockname(sock, (struct sockaddr *)&localAddr, &addrLen) == -1)
+    {
+        std::cerr << "Error: Failed to get local port." << std::endl;
+        return false;
+    }
+
+    std::cerr << "DATA " << hostname << ":" << ntohs(localAddr.sin_port) << ":" << ntohs(serverAddr.sin_port) << " " << receivedBlockID << std::endl;
+
+    return true;
+}
+bool sendAck(int sock, uint16_t blockID, const std::string &hostname, int serverPort, TFTPOparams &params)
+{
+    // Create an ACK packet
+    std::vector<uint8_t> ackBuffer(4);
+    ackBuffer[0] = 0;                     // High byte of opcode (0 for ACK)
+    ackBuffer[1] = 4;                     // Low byte of opcode (4 for ACK)
+    ackBuffer[2] = (blockID >> 8) & 0xFF; // High byte of block ID
+    ackBuffer[3] = blockID & 0xFF;        // Low byte of block ID
+
+    // Create sockaddr_in structure for the remote server
+    sockaddr_in serverAddr;
+    std::memset(&serverAddr, 0, sizeof(serverAddr));
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(serverPort);
+
+    // Convert the hostname to an IP address and set it in serverAddr
+    if (inet_pton(AF_INET, hostname.c_str(), &(serverAddr.sin_addr)) <= 0)
+    {
+        std::cerr << "Error: Failed to convert hostname to IP address." << std::endl;
+        return false;
+    }
+
+    // Send the ACK packet to the server
+    ssize_t sentBytes = sendto(sock, ackBuffer.data(), ackBuffer.size(), 0, (struct sockaddr *)&serverAddr, sizeof(serverAddr));
+    if (sentBytes == -1)
+    {
+        std::cerr << "Error: Failed to send ACK." << std::endl;
+        return false;
+    }
+
+    // std::cerr << "Sent ACK with block ID: " << blockID << " to server port: " << serverPort << std::endl;
+
+    return true;
+}
+
+// Modify the transfer_file function to receive a file from the server
+int receive_file(int sock, const std::string &hostname, int port, const std::string &localFilePath, const std::string &remoteFilePath, std::string &mode, const std::string &options, TFTPOparams &params)
+{
+    mode = determineMode(remoteFilePath);
+
+    std::ofstream outputFile(localFilePath, std::ios::binary | std::ios::out); // Open a local file to write the received data
+
+    if (!outputFile.is_open())
+    {
+        std::cerr << "Error: Failed to open file for writing." << std::endl;
+        close(sock); // Close the socket on error
+        return 1;
+    }
+
+    std::cout << "File opened" << std::endl;
+
+    // Send an RRQ packet to request the file from the server with options
+
+    bool transferComplete = false;
+
+    // Create sockaddr_in structure for the remote server
+    sockaddr_in serverAddr;
+    std::memset(&serverAddr, 0, sizeof(serverAddr));
+    serverAddr.sin_family = AF_INET;
+
+    // Initialize serverPort and firstOACK outside the loop
+    int serverPort = 0;
+    bool firstOACK = false;
+
+    long long totalSize;
+    long long dataReceivedSoFar;
+    double percentageReceived;
+
+    int RequestRetries = 0;
+    bool rrqAckReceived = false;
+
+    setSocketTimeout(sock, params.timeout_max);
+
+    uint16_t blockID = 0; // Initialize the block ID
+
+    while (!transferComplete)
+    {
+        uint16_t receivedBlockID;
+        std::string data;
+        std::map<std::string, std::string> receivedOptions;
+
+        if (options_used == true && firstOACK == false)
+        {
+            firstOACK = true;
+
+            while (!rrqAckReceived && RequestRetries < 4)
             {
-                std::cerr << "Timeout waiting for ACK packet" << std::endl;
-                return false;
+
+                sendTFTPRequest(READ_REQUEST, sock, hostname, port, remoteFilePath, mode, params);
+
+                rrqAckReceived = receiveAck(sock, blockID, serverPort, params, receivedOptions);
+
+                if (!rrqAckReceived)
+                {
+                    std::cerr << "Warning: ACK not received after RRQ, retrying..." << std::endl;
+                    RequestRetries++;
+                }
             }
-            std::cerr << "Error receiving ACK packet" << std::endl;
-            return false;
+
+            if (RequestRetries == 4)
+            {
+                std::cerr << "Error: Failed to receive ACK or OACK after multiple WRQ attempts. Exiting..." << std::endl;
+                handleError(sock, hostname, port, 0, 0, "Failed to receive ACK or OACK after WRQ");
+                close(sock);
+                return 1;
+            }
+
+            // Set the server's port and IP address in serverAddr
+            serverAddr.sin_port = htons(serverPort);
+            inet_pton(AF_INET, hostname.c_str(), &(serverAddr.sin_addr));
+            if (option_tsize_used)
+            {
+                totalSize = std::stoll(receivedOptions["tsize"]); // Convert string to long long
+            }
+        }
+        //
+        if (options_used)
+        {
+
+            // Send an ACK packet before receiving DATA
+            if (!sendAck(sock, blockID, hostname, serverPort, params))
+            {
+                std::cerr << "Error: Failed to send ACK before receiving DATA." << std::endl;
+                close(sock);                   // Close the socket on error
+                outputFile.close();            // Close the output file
+                remove(localFilePath.c_str()); // Delete the partially downloaded file
+                return 1;
+            }
+
+            int numRetriesRecvData = 0;
+            bool dataReceived = false;
+
+            while (!dataReceived && numRetriesRecvData < 4)
+            {
+
+                dataReceived = receiveData(sock, receivedBlockID, data, params, hostname);
+                if (!dataReceived)
+                {
+                    // Pokud ACK nebyl přijat včas, pokusit se znovu odeslat datový paket
+                    std::cout << "Warning: DATA not received for block " << blockID << ", retrying..." << std::endl;
+
+                    if (!sendAck(sock, blockID, hostname, serverPort, params))
+                    {
+                        std::cout << "Error: Failed to send ACK before receiving DATA." << std::endl;
+                        close(sock);                   // Close the socket on error
+                        outputFile.close();            // Close the output file
+                        remove(localFilePath.c_str()); // Delete the partially downloaded file
+                        return 1;
+                    };
+
+                    numRetriesRecvData++;
+                }
+            }
+
+            if (!dataReceived)
+            {
+                // Datový paket nebyl potvrzen ACK ani po opakovaných pokusech, ukončit program
+                std::cerr << "Error: Failed to receive DATAss." << std::endl;
+                close(sock);                   // Close the socket on error
+                outputFile.close();            // Close the output file
+                remove(localFilePath.c_str()); // Delete the partially downloaded file
+                return 1;
+                std::cerr << "Error: Data packet not acknowledged after multiple retries, exiting..." << std::endl;
+
+                return 1;
+            }
+
+            if (option_tsize_used)
+            {
+                // Extract the total size (tsize) from the receivedOptions map
+
+                dataReceivedSoFar = receivedBlockID * params.blksize;
+
+                // Calculate the percentage of data received
+                percentageReceived = ((double)dataReceivedSoFar / totalSize) * 100;
+
+                if (percentageReceived >= 100)
+                {
+                    percentageReceived = 100;
+                }
+
+                // Print the percentage
+                std::cout << "Received: " << percentageReceived << "% of total data." << std::endl;
+            }
+        }
+        else
+        {
+
+            // Receive a DATA packet and store the data in 'data' with block size option
+
+            if (!receiveData_without_options(sock, receivedBlockID, data, params, hostname))
+            {
+                std::cerr << "Error: Failed to receive DATA." << std::endl;
+                close(sock);                   // Close the socket on error
+                outputFile.close();            // Close the output file
+                remove(localFilePath.c_str()); // Delete the partially downloaded file
+                return 1;
+            }
         }
 
-        if (bytesReceived < sizeof(uint16_t) * 2)
+        // Check if the received block ID is the expected one
+        if (receivedBlockID != blockID + 1)
         {
-            // Invalid ACK packet
-            std::cerr << "Received an invalid ACK packet" << std::endl;
-            return false;
+            std::cerr << "Error: Received out-of-order block ID." << std::endl;
+            close(sock);                   // Close the socket on error
+            outputFile.close();            // Close the output file
+            remove(localFilePath.c_str()); // Delete the partially downloaded file
+            return 1;
         }
 
-        uint16_t opcode = ntohs(ackPacket.opcode);
-        if (opcode == ACK)
+        // Write the received data to the output file
+        if (!outputFile.write(data.data(), data.size()))
         {
-            uint16_t blockNum = ntohs(*(uint16_t *)ackPacket.data);
+            std::cerr << "Error: Failed to write data to the file." << std::endl;
+            close(sock);                   // Close the socket on error
+            outputFile.close();            // Close the output file
+            remove(localFilePath.c_str()); // Delete the partially downloaded file
+            return 1;
+        }
 
-            if (blockNum == expectedBlockNum)
+        // Increment the block ID for the next ACK
+        blockID = receivedBlockID;
+
+        if (data.size() < params.blksize)
+        {
+
+            if (options_used == true)
             {
-                std::cerr << "ACK "
-                          << inet_ntoa(clientAddr.sin_addr) << ":"
-                          << ntohs(clientAddr.sin_port) << " "
-                          << blockNum
-                          << std::endl;
-                return true;
+                if (!sendAck(sock, blockID, hostname, serverPort, params))
+                {
+                    std::cerr << "Error: Failed to send ACK before receiving DATA." << std::endl;
+                    close(sock);                   // Close the socket on error
+                    outputFile.close();            // Close the output file
+                    remove(localFilePath.c_str()); // Delete the partially downloaded file
+                    return 1;
+                }
             }
-            else if (blockNum < expectedBlockNum)
+            transferComplete = true;
+        }
+    }
+
+    // Close the output file
+    outputFile.close();
+
+    // Close the socket
+    close(sock);
+
+    std::cout << "File download complete: " << localFilePath << std::endl;
+}
+
+bool parseTFTPParameters(const std::string &Oparamstring, TFTPOparams &Oparams)
+{
+
+    // Split the string parameters into individual name-value pairs
+    std::istringstream Oparamstream(Oparamstring);
+    std::string paramName;
+    std::string paramValue;
+
+    // Split based on space
+    Oparamstream >> paramName >> paramValue;
+
+    if (!paramName.empty() && !paramValue.empty())
+    {
+        if (paramName == "blksize" || paramName == "BLKSIZE")
+        {
+            option_blksize_used = true;
+
+            int blksize = std::stoi(paramValue);
+            if (blksize >= 8 && blksize <= 65464) // Check valid range for blksize
             {
-                // Received a duplicate ACK (ignore)
-                continue;
+                Oparams.blksize = blksize;
             }
             else
             {
-                // Received an out-of-order ACK (unexpected)
-                std::cerr << "Received an unexpected ACK for block " << blockNum << std::endl;
+                std::cerr << "Chybná hodnota parametru blksize: " << blksize << std::endl;
+                return false;
+            }
+        }
+        else if (paramName == "timeout" || paramName == "TIMEOUT")
+        {
+            option_timeout_used = true;
+
+            int maxTimeout = std::stoi(paramValue);
+            if (maxTimeout >= 0)
+            {
+                Oparams.timeout_max = maxTimeout;
+            }
+            else
+            {
+                std::cerr << "Chybná hodnota parametru timeout: " << maxTimeout << std::endl;
+                return false;
+            }
+        }
+        else if (paramName == "tsize" || paramName == "TSIZE")
+        {
+            option_tsize_used = true;
+
+            int transfersize = std::stoi(paramValue);
+            if (transfersize >= 0)
+            {
+                Oparams.transfersize = transfersize;
+            }
+            else
+            {
+                std::cerr << "Chybná hodnota parametru tsize: " << transfersize << std::endl;
                 return false;
             }
         }
         else
         {
-            // Received an unexpected packet (not an ACK)
-            std::cerr << "Received an unexpected packet with opcode " << opcode << std::endl;
-            return false;
-        }
-    }
-}
-
-bool receiveDataPacket(int sockfd, sockaddr_in &clientAddr, sockaddr_in &serverAddr, uint16_t expectedBlockNum, std::ofstream &file, TFTPOparams &params)
-{
-    std::vector<uint8_t> dataPacket;
-    dataPacket.clear();
-    socklen_t clientAddrLen = sizeof(clientAddr);
-    dataPacket.resize(params.blksize + 4, 0); // Inicializace vektoru nulami
-
-    // Set the timeout for recvfrom
-    struct timeval tv;
-    tv.tv_sec = params.timeout;
-    tv.tv_usec = 0;
-    if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0)
-    {
-        std::cerr << "Failed to set socket timeout" << std::endl;
-        return false;
-    }
-
-    ssize_t bytesReceived = recvfrom(sockfd, dataPacket.data(), dataPacket.size(), 0, (struct sockaddr *)&clientAddr, &clientAddrLen);
-
-    if (bytesReceived < 0)
-    {
-        if (errno == EAGAIN || errno == EWOULDBLOCK)
-        {
-            std::cerr << "Timeout waiting for DATA packet" << std::endl;
-            return false;
-        }
-        std::cerr << "Error receiving DATA packet" << std::endl;
-        return false;
-    }
-
-    if (bytesReceived < sizeof(uint16_t) * 2)
-    {
-        // Invalid DATA packet
-        std::cerr << "Received an invalid DATA packet" << std::endl;
-        return false;
-    }
-
-    uint16_t opcode = ntohs(*reinterpret_cast<uint16_t *>(dataPacket.data()));
-
-    if (opcode == DATA)
-    {
-        uint16_t blockNum = ntohs(*reinterpret_cast<uint16_t *>(dataPacket.data() + sizeof(uint16_t)));
-
-        if (blockNum == expectedBlockNum)
-        {
-            // Calculate the size of the data portion in this packet
-            uint16_t dataSize = bytesReceived - sizeof(uint16_t) * 2;
-
-            if (dataSize <= 0)
-            {
-                std::cerr << "Received an empty DATA packet for block " << blockNum << std::endl;
-                return false;
-            }
-
-            // Write the data to the file
-            file.write(reinterpret_cast<const char *>(dataPacket.data() + sizeof(uint16_t) * 2), dataSize);
-
-            if (dataSize < params.blksize - 2)
-            {
-                lastblockfromoutside = true;
-            }
-
-            std::cout << "DATA "
-                      << inet_ntoa(clientAddr.sin_addr) << ":"
-                      << ntohs(clientAddr.sin_port) << ":"
-                      << ntohs(serverAddr.sin_port) << " "
-                      << blockNum
-                      << std::endl;
-
-            return true;
-        }
-        else if (blockNum < expectedBlockNum)
-        {
-            // Received a duplicate DATA packet (ignore)
-            std::cerr << "Received a duplicate DATA packet for block " << blockNum << std::endl;
-            return false;
-        }
-        else
-        {
-            // Received an out-of-order DATA packet (unexpected)
-            std::cerr << "Received an unexpected DATA packet for block " << blockNum << std::endl;
+            std::cerr << "Neznámý parametr: " << paramName << std::endl;
             return false;
         }
     }
     else
     {
-        // Received an unexpected packet (not a DATA packet)
-        std::cerr << "Received an unexpected packet with opcode " << opcode << std::endl;
-        return false;
-    }
-}
-
-bool sendAck(int sockfd, sockaddr_in &clientAddr, uint16_t blockNum)
-{
-    TFTPPacket ackPacket;
-    ackPacket.opcode = htons(ACK);
-    uint16_t blockNumNetwork = htons(blockNum);
-    memcpy(ackPacket.data, &blockNumNetwork, sizeof(uint16_t));
-
-    ssize_t sentBytes = sendto(sockfd, &ackPacket, sizeof(uint16_t) * 2, 0, (struct sockaddr *)&clientAddr, sizeof(clientAddr));
-
-    if (sentBytes == -1)
-    {
-        std::cerr << "Error sending ACK packet for block " << blockNum << std::endl;
+        std::cerr << "Nesprávný formát parametrů." << std::endl;
         return false;
     }
 
+    options_used = true;
     return true;
-}
-
-bool hasOptions(TFTPPacket &requestPacket, std::string &filename, std::string &mode, std::map<std::string, int> &options_map, TFTPOparams &params)
-{
-    int optionValue;
-    std::string optionName;
-
-    // Extract the filename
-    char *packetData = requestPacket.data;
-
-    // Find the null terminator after the filename
-    size_t filenameLength = strlen(packetData);
-
-    // Check if the null terminator is found and the filename is not empty
-    if (filenameLength == 0 || filenameLength >= MAX_DATA_SIZE)
-    {
-        std::cerr << "Invalid filename in the request packet." << std::endl;
-        return false;
-    }
-
-    filename = packetData;
-    packetData += filenameLength + 1; // Move to the next byte after the filename
-
-    // Extract the mode
-    size_t modeLength = strlen(packetData);
-
-    // Check if the mode is "octet" or "netascii"
-    if (modeLength == 0 || modeLength >= MAX_DATA_SIZE)
-    {
-        std::cerr << "Unsupported transfer mode in the request packet." << std::endl;
-        return false;
-    }
-
-    mode = packetData;
-
-    // Move to the next byte after the mode
-    packetData += modeLength + 1;
-
-    // Check if there are options present
-    while (packetData < requestPacket.data + sizeof(requestPacket.data))
-    {
-        // Extract the option name
-        size_t optionNameLength = strnlen(packetData, MAX_DATA_SIZE);
-
-        if (optionNameLength == 0)
-        {
-            break; // No more options
-        }
-
-        std::string optionName = packetData;
-        packetData += optionNameLength + 1;
-
-        // Extract the option value
-        size_t optionValueLength = strnlen(packetData, MAX_DATA_SIZE);
-
-        if (optionValueLength == 0)
-        {
-            std::cerr << "Malformed option in the request packet." << std::endl;
-            return false;
-        }
-
-        std::string optionValueStr = packetData;
-        packetData += optionValueLength + 1;
-
-        try
-        {
-            int optionValue = std::stoi(optionValueStr);
-            options_map[optionName] = optionValue;
-        }
-        catch (const std::exception &e)
-        {
-            std::cerr << "Invalid option value: " << optionValueStr << std::endl;
-            return false;
-        }
-    }
-
-    auto blksizeIt = options_map.find("blksize");
-    auto timeoutIt = options_map.find("timeout");
-    auto tsizeIt = options_map.find("tsize");
-
-    // If "blksize" option is found in the map, use the specified block size
-    if (blksizeIt != options_map.end())
-    {
-        params.blksize = blksizeIt->second; // Read the value from the map
-        blocksizeOptionUsed = true;
-    }
-
-    // If "timeout" option is found in the map, use the specified timeout
-    if (timeoutIt != options_map.end())
-    {
-        params.timeout = timeoutIt->second; // Read the value from the map
-        timeoutOptionUsed = true;
-    }
-
-    // If "tsize" option is found in the map, use the specified timeout
-    if (tsizeIt != options_map.end())
-    {
-        params.transfersize = tsizeIt->second; // Read the value from the map
-        transfersizeOptionUsed = true;
-    }
-
-    // Options processed successfully
-    return true;
-}
-
-// Main TFTP server function
-void runTFTPServer(int port, const std::string &root_dirpath)
-{
-    int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sockfd < 0)
-    {
-        std::cerr << "Error creating socket" << std::endl;
-        return;
-    }
-
-    if (chdir(root_dirpath.c_str()) != 0)
-    {
-        std::cerr << "Error: Failed to change to root directory: " << root_dirpath << std::endl;
-        return;
-    }
-
-    struct sockaddr_in serverAddr, clientAddr;
-    memset(&serverAddr, 0, sizeof(serverAddr));
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_addr.s_addr = INADDR_ANY;
-    serverAddr.sin_port = htons(port);
-
-    if (bind(sockfd, (struct sockaddr *)&serverAddr, sizeof(serverAddr)) < 0)
-    {
-        std::cerr << "Error binding socket" << std::endl;
-        close(sockfd);
-        return;
-    }
-
-    // Get the current socket timeout settings for restoration
-    struct timeval original_tv;
-    socklen_t len = sizeof(original_tv);
-    getsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &original_tv, &len);
-
-    while (true)
-    {
-        TFTPPacket requestPacket;
-        TFTPOparams params;
-        params.blksize = 512;
-        params.timeout = 5;
-        blocksizeOptionUsed = false;
-        timeoutOptionUsed = false;
-        transfersizeOptionUsed = false;
-
-        setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &original_tv, sizeof(original_tv));
-
-        memset(&requestPacket, 0, sizeof(requestPacket));
-
-        socklen_t clientAddrLen = sizeof(clientAddr);
-
-        std::map<std::string, int> options_map;
-
-        ssize_t bytesReceived = recvfrom(sockfd, &requestPacket, sizeof(requestPacket), 0, (struct sockaddr *)&clientAddr, &clientAddrLen);
-
-        if (bytesReceived < 0)
-        {
-            std::cerr << "Error receiving packet" << std::endl;
-            continue;
-        }
-
-        uint16_t opcode = ntohs(requestPacket.opcode);
-        std::string filename;
-        std::string mode;
-
-        hasOptions(requestPacket, filename, mode, options_map, params);
-
-        std::string optionsString = "";
-        for (const auto &pair : options_map)
-        {
-            optionsString += pair.first + "=" + std::to_string(pair.second) + " ";
-        }
-
-        if (opcode == RRQ)
-        {
-
-            std::cout << "RRQ "
-                      << inet_ntoa(clientAddr.sin_addr) << ":"
-                      << ntohs(clientAddr.sin_port) << " \""
-                      << filename << "\" "
-                      << mode << " "
-                      << optionsString
-                      << std::endl;
-
-            if (!sendFileData(sockfd, clientAddr, filename, options_map, params))
-            {
-                std::cerr << "Error sending file data" << std::endl;
-            }
-        }
-        else if (opcode == WRQ)
-        {
-
-            std::cout << "WRQ "
-                      << inet_ntoa(clientAddr.sin_addr) << ":"
-                      << ntohs(clientAddr.sin_port) << " \""
-                      << filename << "\" "
-                      << mode << " "
-                      << optionsString
-                      << std::endl;
-
-            std::ofstream file(filename, std::ios::binary);
-
-            if (!file)
-            {
-                sendError(sockfd, ERROR_ACCESS_VIOLATION, "Access violation", clientAddr);
-            }
-            else
-            {
-                if (!options_map.empty())
-                {
-                    if (!sendOACK(sockfd, clientAddr, options_map, params, params.transfersize)) // 0 zatím
-                    {
-                        continue;
-                    }
-                }
-                else
-                {
-                    if (!sendAck(sockfd, clientAddr, 0))
-                    {
-                        std::cerr << "Error sending initial ACK" << std::endl;
-                        file.close();
-                        continue;
-                    }
-                }
-
-                // Start receiving file data in DATA packets
-                uint16_t blockNum = 1; // Initialize block number to 1
-                bool lastBlockReceived = false;
-                lastblockfromoutside = false;
-
-                while (!lastBlockReceived)
-                {
-                    int retries = 0;
-                    const int maxRetries = 4; // As per RFC specification
-                    bool dataPacketReceived = false;
-
-                    while (retries < maxRetries)
-                    {
-                        if (receiveDataPacket(sockfd, clientAddr, serverAddr, blockNum, file, params))
-                        {
-                            dataPacketReceived = true;
-                            break;
-                        }
-                        else
-                        {
-                            retries++;
-                            if (!options_map.empty() && blockNum == 1)
-                            {
-                                if (!sendOACK(sockfd, clientAddr, options_map, params, params.transfersize)) // 0 zatím
-                                {
-                                    continue;
-                                }
-                            }
-                            else
-                            {
-                                if (!sendAck(sockfd, clientAddr, blockNum - 1))
-                                {
-                                    std::cerr << "Error sending initial ACK" << std::endl;
-                                    file.close();
-                                    continue;
-                                }
-                            }
-                        }
-                    }
-
-                    if (!dataPacketReceived)
-                    {
-                        std::cerr << "Failed to receive DATA packet for block " << blockNum << " after multiple retries" << std::endl;
-                        break;
-                    }
-
-                    // Send ACK for the received block
-                    if (!sendAck(sockfd, clientAddr, blockNum))
-                    {
-                        std::cerr << "Error sending ACK for block " << blockNum << std::endl;
-                        break;
-                    }
-
-                    // Check if the received block was the last block
-                    if (lastblockfromoutside == true)
-                    {
-                        lastBlockReceived = true;
-                    }
-                    blockNum++;
-                }
-
-                file.close(); // Close the file when the transfer is complete or encounters an error
-            }
-        }
-
-        else
-        {
-            sendError(sockfd, ERROR_UNDEFINED, "Undefined request", clientAddr);
-        }
-        memset(&requestPacket, 0, sizeof(requestPacket));
-    }
-
-    close(sockfd);
-}
-
-void sigintHandler(int signal)
-{
-    std::cout << "Received SIGINT (Ctrl+C). Terminating gracefully..." << std::endl;
-    // Perform any cleanup or termination tasks here
-    std::exit(0); // Terminate the program
 }
 
 int main(int argc, char *argv[])
 {
-    std::signal(SIGINT, sigintHandler);
+    std::string hostname;
+    int port = 69; // Default port for TFTP
+    std::string localFilePath;
+    std::string remoteFilePath;
+    std::string options; // Optional parameters for OACK
 
-    int port = 69;            // Default TFTP port
-    std::string root_dirpath; // Directory path
+    TFTPOparams Oparams;
 
-    for (int i = 1; i < argc; i++)
+    // Inicializace parametrů na výchozí hodnoty
+    Oparams.blksize = 512;    // Výchozí hodnota blksize
+    Oparams.timeout_max = 5;  // Výchozí hodnota timeout_max
+    Oparams.transfersize = 0; // Výchozí hodnota transfersize
+
+    // Process command-line arguments, including optional parameters
+    for (int i = 1; i < argc; ++i)
     {
-        if (strcmp(argv[i], "-p") == 0)
+        std::string arg = argv[i];
+        if (arg == "-h" && i + 1 < argc)
         {
-            if (i + 1 < argc)
+            hostname = argv[++i];
+        }
+        else if (arg == "-p" && i + 1 < argc)
+        {
+            port = std::atoi(argv[++i]);
+        }
+        else if (arg == "-f" && i + 1 < argc)
+        {
+            remoteFilePath = argv[++i];
+        }
+        else if (arg == "-t" && i + 1 < argc)
+        {
+            localFilePath = argv[++i];
+        }
+        else if (arg == "--option" && i + 1 < argc)
+        {
+            if (!parseTFTPParameters(argv[++i], Oparams))
             {
-                port = std::atoi(argv[i + 1]);
-                i++; // Skip the next argument
-            }
-            else
-            {
-                std::cerr << "Error: Missing value for '-p' option" << std::endl;
+                std::cerr << "Chyba při parsování parametrů." << std::endl;
                 return 1;
             }
         }
-        else
-        {
-            root_dirpath = argv[i];
-        }
     }
 
-    if (root_dirpath.empty())
+    if (hostname.empty() || localFilePath.empty())
     {
-        std::cerr << "Error: root_dirpath must be specified" << std::endl;
+        std::cerr << "Usage: tftp-client -h hostname -f [filepath] -t dest_filepath [-p port]" << std::endl;
         return 1;
     }
 
-    runTFTPServer(port, root_dirpath);
+    // Determine the mode based on the file content
+    std::string mode = "octet";
+
+    // Create a UDP socket for communication
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock == -1)
+    {
+        std::cerr << "Error: Failed to create socket." << std::endl;
+        return 1;
+    }
+
+    // Set up the sockaddr_in structure for the server
+    sockaddr_in serverAddr;
+    std::memset(&serverAddr, 0, sizeof(serverAddr));
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(port);
+    inet_pton(AF_INET, hostname.c_str(), &(serverAddr.sin_addr));
+
+    if (remoteFilePath.empty())
+    {
+        if (SendFile(sock, hostname, port, localFilePath, remoteFilePath, mode, options, Oparams) == 1)
+        {
+            return 1;
+        };
+    }
+    else if (!localFilePath.empty() && !remoteFilePath.empty())
+    {
+        // Receive a file from the server
+        if (receive_file(sock, hostname, port, localFilePath, remoteFilePath, mode, options, Oparams) == 1)
+        {
+            return 1;
+        };
+    }
+    else
+    {
+        std::cerr << "Error: You must specify either -f or -t option to send or receive a file, respectively." << std::endl;
+        close(sock);
+        return 1;
+    }
+
     return 0;
 }

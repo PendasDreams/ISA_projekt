@@ -11,7 +11,10 @@
 #include <sys/statvfs.h>
 #include <filesystem>
 
+#include <chrono>
+#include <thread>
 // TODO
+//      pořešit cout a cerr
 //      pořešit všude timeout
 //      ověřit chybový stavy client error sending
 //      code review
@@ -289,6 +292,7 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filena
 
             while (retries < maxRetries)
             {
+
                 if (!sendDataPacket(sockfd, clientAddr, blockNum, dataBuffer.data(), bytesRead, bytesRead))
                 {
                     file.close();
