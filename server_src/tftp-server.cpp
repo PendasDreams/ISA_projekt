@@ -12,7 +12,6 @@
 #include <filesystem>
 
 // TODO
-//      case insensitive options
 //      pořešit všude timeout
 //      ověřit chybový stavy client error sending
 //      code review

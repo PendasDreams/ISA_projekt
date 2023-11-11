@@ -362,6 +362,7 @@ int SendFile(int sock, const std::string &hostname, int port, const std::string 
     if (writeRequestRetries == 4)
     {
         std::cerr << "Error: Failed to receive ACK or OACK after multiple WRQ attempts. Exiting..." << std::endl;
+        handleError(sock, hostname, port, 0, 0, "Failed to receive ACK or OACK after WRQ");
         close(sock);
         return 1;
     }
@@ -770,7 +771,6 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
     std::cout << "File opened" << std::endl;
 
     // Send an RRQ packet to request the file from the server with options
-    sendTFTPRequest(READ_REQUEST, sock, hostname, port, remoteFilePath, mode, params);
 
     bool transferComplete = false;
 
@@ -787,6 +787,11 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
     long long dataReceivedSoFar;
     double percentageReceived;
 
+    int readRequestRetries = 0;
+    bool rrqAckReceived = false;
+
+    setSocketTimeout(sock, params.timeout_max);
+
     uint16_t blockID = 0; // Initialize the block ID
 
     while (!transferComplete)
@@ -798,10 +803,24 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
         if (options_used == true && firstOACK == false)
         {
             firstOACK = true;
-            // Wait for an ACK or OACK response after WRQ and capture the server's port
-            if (!receiveAck(sock, blockID, serverPort, params, receivedOptions))
+
+            while (!rrqAckReceived && readRequestRetries < 4)
             {
-                std::cerr << "Error: Failed to receive ACK or OACK after WRQ." << std::endl;
+
+                sendTFTPRequest(READ_REQUEST, sock, hostname, port, remoteFilePath, mode, params);
+
+                rrqAckReceived = receiveAck(sock, blockID, serverPort, params, receivedOptions);
+
+                if (!rrqAckReceived)
+                {
+                    std::cerr << "Warning: ACK not received after RRQ, retrying..." << std::endl;
+                    readRequestRetries++;
+                }
+            }
+
+            if (readRequestRetries == 4)
+            {
+                std::cerr << "Error: Failed to receive ACK or OACK after multiple WRQ attempts. Exiting..." << std::endl;
                 handleError(sock, hostname, port, 0, 0, "Failed to receive ACK or OACK after WRQ");
                 close(sock);
                 return 1;
