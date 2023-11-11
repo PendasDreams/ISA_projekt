@@ -62,7 +62,6 @@ for SERVER_FILE in $ROOT_DIRPATH_SERVER/*; do
     else
         echo -e "${GREEN}PASSED${NC}"
         PASSED_TESTS+=("$FILE_NAME download from server")
-        sleep 0.2  # Pause 0.2 seconds between tests
     fi
 done
 
@@ -82,7 +81,6 @@ for CLIENT_FILE in $CLIENT_SERVER_PATH/*; do
     else
         echo -e "${GREEN}PASSED${NC}"
         PASSED_TESTS+=("$FILE_NAME upload to server")
-        sleep 0.2  # Pause 0.2 seconds between tests
     fi
 done
 

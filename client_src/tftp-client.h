@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <iomanip>
 #include <fcntl.h>
+#include <sys/statvfs.h>
 
 enum class RequestType
 {
@@ -64,7 +65,7 @@ enum TFTPRequestType
     WRITE_REQUEST
 };
 
-bool sendTFTPRequest(TFTPRequestType requestType, int sock, const std::string &hostname, int port, const std::string &filepath, const std::string &mode, const TFTPOparams &params);
+bool sendTFTPRequest(TFTPRequestType requestType, int sock, const std::string &hostname, int port, const std::string &filepath, const std::string &mode, TFTPOparams &params);
 
 /**
  * @brief Check if a file is in ASCII format based on its extension.
@@ -131,7 +132,7 @@ void handleError(int sock, const std::string &hostname, int srcPort, int dstPort
  * @param params The TFTP parameters including block size and timeout.
  * @return True if the WRQ packet was sent successfully, false otherwise.
  */
-bool sendWriteRequest(int sock, const std::string &hostname, int port, const std::string &filepath, const std::string &mode, const std::string &options, const TFTPOparams &params);
+bool sendWriteRequest(int sock, const std::string &hostname, int port, const std::string &filepath, const std::string &mode, const std::string &options, TFTPOparams &params);
 
 /**
  * @brief Receive an ACK (Acknowledgment) packet and capture the server's port and received options.
@@ -143,7 +144,7 @@ bool sendWriteRequest(int sock, const std::string &hostname, int port, const std
  * @param receivedOptions The received options (output).
  * @return True if an ACK or OACK packet was received and processed successfully, false otherwise.
  */
-bool receiveAck(int sock, uint16_t &receivedBlockID, int &serverPort, const TFTPOparams &params, std::map<std::string, std::string> &receivedOptions);
+bool receiveAck(int sock, uint16_t &receivedBlockID, int &serverPort, TFTPOparams &params, std::map<std::string, std::string> &receivedOptions);
 
 /**
  * @brief Send a DATA packet with data.
@@ -169,7 +170,7 @@ bool sendData(int sock, const std::string &hostname, int port, const std::string
  * @param params The TFTP parameters including block size and timeout.
  * @return 0 on success, 1 on failure.
  */
-int SendFile(int sock, const std::string &hostname, int port, const std::string &localFilePath, const std::string &remoteFilePath, std::string &mode, const std::string &options, const TFTPOparams &params);
+int SendFile(int sock, const std::string &hostname, int port, const std::string &localFilePath, const std::string &remoteFilePath, std::string &mode, const std::string &options, TFTPOparams &params);
 
 /**
  * @brief Sends a Read Request (RRQ) packet to request a file from a TFTP server.
@@ -182,7 +183,7 @@ int SendFile(int sock, const std::string &hostname, int port, const std::string 
  * @param options Optional parameters for the request.
  * @param params The TFTP parameters including block size and timeout.
  */
-void sendReadRequest(int sock, const std::string &hostname, int port, const std::string &remoteFilePath, const std::string &mode, const std::string &options, const TFTPOparams &params);
+void sendReadRequest(int sock, const std::string &hostname, int port, const std::string &remoteFilePath, const std::string &mode, const std::string &options, TFTPOparams &params);
 
 /**
  * @brief Receives a DATA packet from a TFTP server and captures the received data.
@@ -194,7 +195,7 @@ void sendReadRequest(int sock, const std::string &hostname, int port, const std:
  * @param hostname The hostname of the remote server.
  * @return True if the DATA packet was received and processed successfully, false otherwise.
  */
-bool receiveData(int sock, uint16_t &receivedBlockID, std::string &data, const TFTPOparams &params, const std::string &hostname);
+bool receiveData(int sock, uint16_t &receivedBlockID, std::string &data, TFTPOparams &params, const std::string &hostname);
 
 /**
  * @brief Receives a DATA packet from a TFTP server without optional parameters and captures the received data.
@@ -206,7 +207,7 @@ bool receiveData(int sock, uint16_t &receivedBlockID, std::string &data, const T
  * @param hostname The hostname of the remote server.
  * @return True if the DATA packet was received and processed successfully, false otherwise.
  */
-bool receiveData_without_options(int sock, uint16_t &receivedBlockID, std::string &data, const TFTPOparams &params, const std::string &hostname);
+// bool receiveData_without_options(int sock, uint16_t &receivedBlockID, std::string &data, const TFTPOparams &params, const std::string &hostname);
 
 /**
  * @brief Sends an ACK (Acknowledgment) packet to acknowledge the receipt of data.
@@ -218,7 +219,7 @@ bool receiveData_without_options(int sock, uint16_t &receivedBlockID, std::strin
  * @param params The TFTP parameters including block size and timeout.
  * @return True if the ACK packet was sent successfully, false otherwise.
  */
-bool sendAck(int sock, uint16_t blockID, const std::string &hostname, int serverPort, const TFTPOparams &params);
+bool sendAck(int sock, uint16_t blockID, const std::string &hostname, int serverPort, TFTPOparams &params);
 
 /**
  * @brief Receives a file from a TFTP server.
@@ -233,7 +234,7 @@ bool sendAck(int sock, uint16_t blockID, const std::string &hostname, int server
  * @param params The TFTP parameters including block size and timeout.
  * @return 0 on success, 1 on failure.
  */
-int receive_file(int sock, const std::string &hostname, int port, const std::string &localFilePath, const std::string &remoteFilePath, const std::string &mode, const std::string &options, const TFTPOparams &params);
+int receive_file(int sock, const std::string &hostname, int port, const std::string &localFilePath, const std::string &remoteFilePath, const std::string &mode, const std::string &options, TFTPOparams &params);
 
 /**
  * @brief Parses TFTP parameters from a string and populates the TFTPOparams struct.

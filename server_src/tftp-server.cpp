@@ -12,12 +12,12 @@
 #include <filesystem>
 
 // TODO
-//      pořešit všude timeout
+//      pořešit všude timeout jak v clientovi tak v serveru
 //      ověřit chybový stavy client
 //      code review
 //      check RFC
 //      ověřit na referenčním stroji
-//      odelat file exists
+//      dodelat file exists
 //      dokumentace
 
 bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr, int timeout);
@@ -88,9 +88,27 @@ int handleIncomingPacket(int sockfd, sockaddr_in &clientAddr, int opcode)
     }
 }
 
-uint16_t checkDiskSpace(int size_of_file, const std::string &path)
+uint16_t checkDiskSpace(int sockfd, int size_of_file, const std::string &path, sockaddr_in &clientAddr)
 {
+
     struct statvfs stat;
+    if (statvfs("/", &stat) == 0)
+    {
+        unsigned long long totalSpace = stat.f_frsize * stat.f_blocks;
+        unsigned long long freeSpace = stat.f_frsize * stat.f_bfree;
+
+        if (freeSpace < size_of_file)
+        {
+            std::cout << "Free space is: " << freeSpace / (1024 * 1024) << " MB "
+                      << "You need " << size_of_file << std::endl;
+            sendError(sockfd, ERROR_ILLEGAL_OPERATION, "Not enough disk space", clientAddr);
+        }
+    }
+    else
+    {
+        std::cerr << "Error getting disk space information." << std::endl;
+        return ERROR_UNDEFINED;
+    }
 
     // Convert std::string to const char*
     const char *path_cstr = path.c_str();
@@ -760,7 +778,7 @@ void runTFTPServer(int port, const std::string &root_dirpath)
             if (transfersizeOptionUsed)
             {
 
-                uint16_t diskspace = checkDiskSpace(params.transfersize, filename);
+                uint16_t diskspace = checkDiskSpace(sockfd, params.transfersize, filename, clientAddr);
 
                 if (diskspace == ERROR_DISK_FULL)
                 {
