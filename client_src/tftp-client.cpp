@@ -127,7 +127,7 @@ void handleError(int sock, const std::string &hostname, int srcPort, int dstPort
 }
 
 // Function to send WRQ (Write Request) packet with optional parameters (OACK)
-bool receiveAck(int sock, uint16_t &receivedBlockID, int &serverPort, const TFTPOparams &params, std::map<std::string, std::string> &receivedOptions)
+bool receiveAck(int sock, uint16_t &receivedBlockID, int &serverPort, TFTPOparams &params, std::map<std::string, std::string> &receivedOptions)
 {
     // Create a buffer to receive the ACK or OACK packet
     uint8_t packetBuffer[516]; // Adjust the buffer size as needed for maximum possible packet size
@@ -221,6 +221,26 @@ bool receiveAck(int sock, uint16_t &receivedBlockID, int &serverPort, const TFTP
             else if (pair.first == "tsize")
             {
                 receivedOptions["tsize"] = recieved_options["tsize"];
+
+                std::string tsize_str = recieved_options["tsize"];
+
+                int tsize = std::stoi(tsize_str);
+
+                params.transfersize = tsize;
+
+                struct statvfs stat;
+                if (statvfs("/", &stat) == 0)
+                {
+                    unsigned long long freeSpace = stat.f_frsize * stat.f_bfree;
+                    if (freeSpace < params.transfersize)
+                        std::cout << "Free space is: " << freeSpace / (1024 * 1024) << " MB "
+                                  << "You need" << receivedOptions["tsize"] << std::endl;
+                }
+                else
+                {
+                    std::cerr << "Error getting disk space information." << std::endl;
+                    // TODO ERROR SEND
+                }
             }
         }
     }
@@ -279,7 +299,7 @@ bool sendData(int sock, const std::string &hostname, int port, const std::string
 }
 
 // Function to send a file to the server or upload from stdin
-int SendFile(int sock, const std::string &hostname, int port, const std::string &localFilePath, const std::string &remoteFilePath, std::string &mode, const std::string &options, const TFTPOparams &params)
+int SendFile(int sock, const std::string &hostname, int port, const std::string &localFilePath, const std::string &remoteFilePath, std::string &mode, const std::string &options, TFTPOparams &params)
 {
     std::istream *inputStream;
     std::ifstream file;
@@ -483,7 +503,7 @@ int SendFile(int sock, const std::string &hostname, int port, const std::string 
 //****************************************************************************************************************************
 
 // Function to send RRQ (Read Request) packet
-bool sendTFTPRequest(TFTPRequestType requestType, int sock, const std::string &hostname, int port, const std::string &filepath, const std::string &mode, const TFTPOparams &params)
+bool sendTFTPRequest(TFTPRequestType requestType, int sock, const std::string &hostname, int port, const std::string &filepath, const std::string &mode, TFTPOparams &params)
 {
     std::vector<uint8_t> requestBuffer;
     if (requestType == READ_REQUEST)
@@ -577,7 +597,7 @@ bool sendTFTPRequest(TFTPRequestType requestType, int sock, const std::string &h
     std::cerr << std::endl;
 }
 
-bool receiveData(int sock, uint16_t &receivedBlockID, std::string &data, const TFTPOparams &params, const std::string &hostname)
+bool receiveData(int sock, uint16_t &receivedBlockID, std::string &data, TFTPOparams &params, const std::string &hostname)
 {
     // Create a buffer to receive the DATA packet
     std::vector<uint8_t> dataBuffer(params.blksize + 4); // Max size of a DATA packet with room for header
@@ -625,7 +645,7 @@ bool receiveData(int sock, uint16_t &receivedBlockID, std::string &data, const T
     return true;
 }
 
-bool receiveData_without_options(int sock, uint16_t &receivedBlockID, std::string &data, const TFTPOparams &params, const std::string &hostname)
+bool receiveData_without_options(int sock, uint16_t &receivedBlockID, std::string &data, TFTPOparams &params, const std::string &hostname)
 {
     // Create a buffer to receive the DATA packet
     std::vector<uint8_t> dataBuffer(1024); // Max size of a DATA packet
@@ -688,7 +708,7 @@ bool receiveData_without_options(int sock, uint16_t &receivedBlockID, std::strin
 
     return true;
 }
-bool sendAck(int sock, uint16_t blockID, const std::string &hostname, int serverPort, const TFTPOparams &params)
+bool sendAck(int sock, uint16_t blockID, const std::string &hostname, int serverPort, TFTPOparams &params)
 {
     // Create an ACK packet
     std::vector<uint8_t> ackBuffer(4);
@@ -724,7 +744,7 @@ bool sendAck(int sock, uint16_t blockID, const std::string &hostname, int server
 }
 
 // Modify the transfer_file function to receive a file from the server
-int receive_file(int sock, const std::string &hostname, int port, const std::string &localFilePath, const std::string &remoteFilePath, std::string &mode, const std::string &options, const TFTPOparams &params)
+int receive_file(int sock, const std::string &hostname, int port, const std::string &localFilePath, const std::string &remoteFilePath, std::string &mode, const std::string &options, TFTPOparams &params)
 {
     mode = determineMode(remoteFilePath);
 

@@ -12,8 +12,9 @@
 #include <filesystem>
 
 // TODO
+//      case insensitive options
 //      pořešit všude timeout
-//      ověřit chybový stavy client
+//      ověřit chybový stavy client error sending
 //      code review
 //      check RFC
 //      ověřit na referenčním stroji
@@ -91,21 +92,21 @@ int handleIncomingPacket(int sockfd, sockaddr_in &clientAddr, int opcode)
 uint16_t checkDiskSpace(int size_of_file, const std::string &path)
 {
     struct statvfs stat;
-
-    // Convert std::string to const char*
-    const char *path_cstr = path.c_str();
-
-    if (statvfs(path_cstr, &stat) != 0)
+    if (statvfs("/", &stat) == 0)
     {
-        std::cerr << "Error retrieving disk information." << std::endl;
-        return ERROR_UNDEFINED;
+        unsigned long long freeSpace = stat.f_frsize * stat.f_bfree;
+
+        if (freeSpace < size_of_file)
+        {
+            std::cout << "Free space is: " << freeSpace / (1024 * 1024) << " MB "
+                      << "You need" << size_of_file << std::endl;
+            return ERROR_DISK_FULL;
+        }
     }
-
-    uint64_t freeSpace = stat.f_bsize * stat.f_bfree;
-
-    if (freeSpace < size_of_file)
+    else
     {
-        return ERROR_DISK_FULL;
+        std::cerr << "Error getting disk space information." << std::endl;
+        return ERROR_UNDEFINED;
     }
 
     return 0;
