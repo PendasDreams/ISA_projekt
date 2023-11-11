@@ -204,12 +204,22 @@ bool receiveAck(int sock, uint16_t &receivedBlockID, int &serverPort, TFTPOparam
         for (const auto &pair : recieved_options)
         {
 
-            if (pair.first == "blksize" && (pair.second != std::to_string(params.blksize)))
+            if (pair.first == "blksize")
             {
-                std::cerr << "Error: Received blksize option does not match the requested value." << std::endl;
-                std::cerr << "Error: Requested value from server: " << pair.second << std::endl;
-                std::cerr << "Error: Requested value from client: " << std::to_string(params.blksize) << std::endl;
-                return false;
+                int intblksize = std::stoi(pair.second);
+
+                if (intblksize > params.blksize)
+                {
+
+                    std::cerr << "Error: Received blksize option does not match the requested value." << std::endl;
+                    std::cerr << "Error: Requested value from server: " << pair.second << std::endl;
+                    std::cerr << "Error: Requested value from client: " << std::to_string(params.blksize) << std::endl;
+                    return false;
+                }
+                else
+                {
+                    params.blksize = intblksize;
+                }
             }
             else if (pair.first == "timeout" && (pair.second != std::to_string(params.timeout_max)))
             {
@@ -924,7 +934,7 @@ bool parseTFTPParameters(const std::string &Oparamstring, TFTPOparams &Oparams)
 
     if (!paramName.empty() && !paramValue.empty())
     {
-        if (paramName == "blksize")
+        if (paramName == "blksize" || paramName == "BLKSIZE")
         {
             option_blksize_used = true;
 
@@ -939,7 +949,7 @@ bool parseTFTPParameters(const std::string &Oparamstring, TFTPOparams &Oparams)
                 return false;
             }
         }
-        else if (paramName == "timeout")
+        else if (paramName == "timeout" || paramName == "TIMEOUT")
         {
             option_timeout_used = true;
 
@@ -954,7 +964,7 @@ bool parseTFTPParameters(const std::string &Oparamstring, TFTPOparams &Oparams)
                 return false;
             }
         }
-        else if (paramName == "tsize")
+        else if (paramName == "tsize" || paramName == "TSIZE")
         {
             option_tsize_used = true;
 

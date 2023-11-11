@@ -16,7 +16,6 @@
 //      pořešit všude timeout
 //      ověřit chybový stavy client error sending
 //      code review
-//      check RFC
 //      ověřit na referenčním stroji
 //      odelat file exists
 //      dokumentace
