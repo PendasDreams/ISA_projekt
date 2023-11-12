@@ -1,69 +1,16 @@
-#include <iostream>
-#include <fstream>
-#include <vector>
-#include <cstring>
-#include <arpa/inet.h>
-#include <sys/socket.h>
-#include <unistd.h>
-#include <map>
-#include <iomanip>
-#include <csignal>
-#include <sys/statvfs.h>
-#include <filesystem>
-#include <chrono>
-#include <thread>
+/**
+ * @file tftp_server.h
+ * @brief TFTP server part of ISA project
+ * @author xnovos14 - Denis Novosád
+ */
+
+#include "tftp-server.h"
 
 // TODO
 //      code review + komnety
 //      ověřit na referenčním stroji
 //      odelat file exists
 //      dokumentace
-
-bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr, sockaddr_in &serverAddr, int timeout);
-
-// TFTP opcodes
-const uint16_t RRQ = 1;
-const uint16_t WRQ = 2;
-const uint16_t DATA = 3;
-const uint16_t ACK = 4;
-const uint16_t ERROR = 5;
-const uint16_t OACK = 6;
-
-// Maximum data packet size
-const size_t MAX_DATA_SIZE = 514;
-
-const uint16_t OP_RRQ = 1;
-const uint16_t OP_WRQ = 2;
-
-// TFTP Error Codes
-const uint16_t ERROR_UNDEFINED = 0;
-const uint16_t ERROR_FILE_NOT_FOUND = 1;
-const uint16_t ERROR_ACCESS_VIOLATION = 2;
-const uint16_t ERROR_DISK_FULL = 3;
-const uint16_t ERROR_ILLEGAL_OPERATION = 4;
-const uint16_t ERROR_UNKNOWN_TRANSFER_ID = 5;
-const uint16_t ERROR_FILE_ALREADY_EXISTS = 6;
-
-// Structure to represent a TFTP packet
-struct TFTPPacket
-{
-    uint16_t opcode;
-    char data[MAX_DATA_SIZE];
-};
-
-bool lastblockfromoutside = false;
-bool blocksizeOptionUsed = false;
-bool timeoutOptionUsed = false;
-bool transfersizeOptionUsed = false;
-
-struct TFTPOparams
-{
-    uint16_t blksize;
-    uint16_t timeout;
-    int transfersize;
-};
-
-void sendError(int sockfd, uint16_t errorCode, const std::string &errorMsg, sockaddr_in &clientAddr, sockaddr_in &serverAddr);
 
 bool fileExists(const std::string &filepath)
 {

@@ -1,3 +1,9 @@
+/**
+ * @file tftp_server.h
+ * @brief TFTP client part of ISA project
+ * @author xnovos14 - Denis Novosád
+ */
+
 #include "tftp-client.h"
 
 bool isAscii(const std::string &fileName)
@@ -93,8 +99,9 @@ bool isBinaryFormat(const std::string &filename)
 }
 
 // Function to handle errors
-void handleError(int sock, const std::string &hostname, int srcPort, int dstPort, uint16_t errorCode, const std::string &errorMsg)
+void handleError(int sock, const std::string &hostname, int srcPort, int serverPort, uint16_t errorCode, const std::string &errorMsg)
 {
+
     // Create an ERROR packet
     uint8_t errorBuffer[4 + errorMsg.length() + 1]; // +1 for null-terminated string
     errorBuffer[0] = 0;                             // High byte of opcode (0 for ERROR)
@@ -106,12 +113,17 @@ void handleError(int sock, const std::string &hostname, int srcPort, int dstPort
     std::memcpy(errorBuffer + 4, errorMsg.c_str(), errorMsg.length());
     errorBuffer[4 + errorMsg.length()] = '\0'; // Null-terminated string
 
-    // Create sockaddr_in structure for the remote server (serverAddr)
+    // Create sockaddr_in structure for the remote server
     sockaddr_in serverAddr;
     std::memset(&serverAddr, 0, sizeof(serverAddr));
     serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(dstPort);
-    inet_pton(AF_INET, hostname.c_str(), &(serverAddr.sin_addr));
+    serverAddr.sin_port = htons(serverPort);
+
+    // Convert the hostname to an IP address and set it in serverAddr
+    if (inet_pton(AF_INET, hostname.c_str(), &(serverAddr.sin_addr)) <= 0)
+    {
+        std::cout << "Error: Failed to convert hostname to IP address." << std::endl;
+    }
 
     // Send ERROR packet
     ssize_t sentBytes = sendto(sock, errorBuffer, sizeof(errorBuffer), 0, (struct sockaddr *)&serverAddr, sizeof(serverAddr));
@@ -120,7 +132,7 @@ void handleError(int sock, const std::string &hostname, int srcPort, int dstPort
         std::cout << "Error: Failed to send ERROR." << std::endl;
     }
 
-    std::cerr << "ERROR " << hostname << ":" << srcPort << ":" << dstPort << " " << errorCode << " \"" << errorMsg << "\"" << std::endl;
+    std::cerr << "ERROR " << hostname << ":" << srcPort << ":" << serverPort << " " << errorCode << " \"" << errorMsg << "\"" << std::endl;
 }
 
 // Function to send WRQ (Write Request) packet with optional parameters (OACK)
@@ -147,6 +159,7 @@ bool receiveAck(int sock, uint16_t &receivedBlockID, int &serverPort, TFTPOparam
     if (receivedBytes < 4)
     {
         std::cout << "Error: Received packet is too short to be an ACK or OACK." << std::endl;
+
         return false;
     }
 
@@ -322,6 +335,7 @@ int SendFile(int sock, const std::string &hostname, int port, const std::string 
     if (!file)
     {
         std::cout << "Error: Failed to open file for reading sendfile." << std::endl;
+        handleError(sock, hostname, port, 0, ERROR_ACCESS_VIOLATION, "ERROR_ACCESS_VIOLATION");
         close(sock); // Close the socket on error
         return 1;
     }
@@ -359,7 +373,7 @@ int SendFile(int sock, const std::string &hostname, int port, const std::string 
     if (writeRequestRetries == 4)
     {
         std::cout << "Error: Failed to receive ACK or OACK after multiple WRQ attempts. Exiting..." << std::endl;
-        handleError(sock, hostname, port, 0, ERROR_UNDEFINED, "Failed to receive ACK or OACK after WRQ");
+        handleError(sock, hostname, port, serverPort, ERROR_UNDEFINED, "Failed to receive ACK or OACK after WRQ");
         close(sock);
         return 1;
     }
@@ -420,6 +434,7 @@ int SendFile(int sock, const std::string &hostname, int port, const std::string 
             {
                 // Datový paket nebyl potvrzen ACK ani po opakovaných pokusech, ukončit program
                 std::cout << "Error: Data packet not acknowledged after multiple retries, exiting..." << std::endl;
+                handleError(sock, hostname, port, serverPort, ERROR_UNDEFINED, "Failed to receive ACK or OACK after WRQ");
                 close(sock);
                 return 1;
             }
@@ -487,6 +502,7 @@ int SendFile(int sock, const std::string &hostname, int port, const std::string 
         {
             // Prázdný DATA packet nebyl potvrzen ACK ani po opakovaných pokusech, ukončit program
             std::cout << "Error: Last null DATA packet not acknowledged after multiple retries, exiting..." << std::endl;
+            handleError(sock, hostname, port, serverPort, ERROR_UNDEFINED, "Failed to receive ACK or OACK after WRQ");
             close(sock);
             return 1;
         }
@@ -686,7 +702,7 @@ bool sendAck(int sock, uint16_t blockID, const std::string &hostname, int server
         return false;
     }
 
-    // std::cout << "Sent ACK with block ID: " << blockID << " to server port: " << serverPort << std::endl;
+    std::cout << "Sent ACK with block ID: " << blockID << " to server port: " << serverPort << std::endl;
 
     return true;
 }
@@ -701,6 +717,7 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
     if (!outputFile.is_open())
     {
         std::cout << "Error: Failed to open file for writing." << std::endl;
+        handleError(sock, hostname, port, 0, ERROR_UNDEFINED, "Failed to receive ACK or OACK after WRQ");
         close(sock); // Close the socket on error
         return 1;
     }
@@ -745,7 +762,7 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
 
             firstOACK = true;
 
-            while (!rrqAckReceived && RequestRetries < 4)
+            while (!rrqAckReceived && RequestRetries < 1)
             {
 
                 rrqAckReceived = receiveAck(sock, blockID, serverPort, params, receivedOptions);
@@ -760,10 +777,10 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
                 }
             }
 
-            if (RequestRetries == 4)
+            if (RequestRetries == 1)
             {
                 std::cout << "Error: Failed to receive ACK or OACK after multiple WRQ attempts. Exiting..." << std::endl;
-                handleError(sock, hostname, port, 0, ERROR_UNDEFINED, "Failed to receive ACK or OACK after WRQ");
+                handleError(sock, hostname, port, serverPort, ERROR_UNDEFINED, "Failed to receive ACK or OACK after WRQ");
                 close(sock);
                 return 1;
             }
@@ -818,7 +835,7 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
             if (!dataReceived)
             {
                 // Datový paket nebyl potvrzen ACK ani po opakovaných pokusech, ukončit program
-                std::cout << "Error: Failed to receive DATAss." << std::endl;
+                handleError(sock, hostname, port, serverPort, ERROR_UNDEFINED, "Failed to receive ACK or OACK after WRQ");
                 close(sock);                   // Close the socket on error
                 outputFile.close();            // Close the output file
                 remove(localFilePath.c_str()); // Delete the partially downloaded file
@@ -866,6 +883,7 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
                     if (!sendAck(sock, blockID + 1, hostname, serverPort, params))
                     {
                         std::cout << "Error: Failed to send ACK before receiving DATA." << std::endl;
+                        handleError(sock, hostname, port, serverPort, ERROR_UNDEFINED, "Failed to receive ACK or OACK after WRQ");
                         close(sock);                   // Close the socket on error
                         outputFile.close();            // Close the output file
                         remove(localFilePath.c_str()); // Delete the partially downloaded file
@@ -879,7 +897,7 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
                 if (numRetriesRecvData == 4)
                 {
                     std::cout << "Error: Failed to receive ACK or OACK after multiple WRQ attempts. Exiting..." << std::endl;
-                    handleError(sock, hostname, port, 0, ERROR_UNDEFINED, "Failed to receive ACK or OACK after WRQ");
+                    handleError(sock, hostname, port, serverPort, ERROR_UNDEFINED, "Failed to receive ACK or OACK after WRQ");
                     close(sock);
                 }
                 numRetriesRecvData++;
