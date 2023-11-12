@@ -786,6 +786,7 @@ void runTFTPServer(int port, const std::string &root_dirpath)
                 {
                     if (!sendOACK(sockfd, clientAddr, options_map, params, params.transfersize)) // 0 zatím
                     {
+                        std::cout << "Error sending OACK" << std::endl;
                         continue;
                     }
                 }
@@ -793,8 +794,7 @@ void runTFTPServer(int port, const std::string &root_dirpath)
                 {
                     if (!sendAck(sockfd, clientAddr, 0))
                     {
-                        std::cerr << "Error sending initial ACK" << std::endl;
-                        file.close();
+                        std::cout << "Error sending initial ACK" << std::endl;
                         continue;
                     }
                 }

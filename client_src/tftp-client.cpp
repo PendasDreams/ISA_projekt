@@ -729,6 +729,7 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
 
     int RequestRetries = 0;
     bool rrqAckReceived = false;
+    bool firstDataRecv = false;
 
     setSocketTimeout(sock, params.timeout_max);
 
@@ -857,7 +858,7 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
             {
 
                 dataReceived = receiveData(sock, receivedBlockID, serverPort, data, params, hostname);
-                if (!dataReceived)
+                if (!dataReceived && firstDataRecv == true)
                 {
 
                     // Pokud ACK nebyl přijat včas, pokusit se znovu odeslat datový paket
@@ -874,7 +875,12 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
 
                     numRetriesRecvData++;
                 }
+                if (!dataReceived && firstDataRecv == false)
+                {
+                    sendTFTPRequest(READ_REQUEST, sock, hostname, port, remoteFilePath, mode, params);
+                }
             }
+            firstDataRecv = true;
 
             serverAddr.sin_port = htons(serverPort);
             inet_pton(AF_INET, hostname.c_str(), &(serverAddr.sin_addr));
@@ -882,7 +888,7 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
             if (!dataReceived)
             {
                 // Datový paket nebyl potvrzen ACK ani po opakovaných pokusech, ukončit program
-                std::cerr << "Error: Failed to receive DATAss." << std::endl;
+                std::cerr << "Error: Failed to receive DATA." << std::endl;
                 close(sock);                   // Close the socket on error
                 outputFile.close();            // Close the output file
                 remove(localFilePath.c_str()); // Delete the partially downloaded file
