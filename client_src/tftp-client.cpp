@@ -609,7 +609,7 @@ bool sendTFTPRequest(TFTPRequestType requestType, int sock, const std::string &h
     std::cerr << std::endl;
 }
 
-bool receiveData(int sock, uint16_t &receivedBlockID, std::string &data, TFTPOparams &params, const std::string &hostname)
+bool receiveData(int sock, uint16_t &receivedBlockID, int &serverPort, std::string &data, TFTPOparams &params, const std::string &hostname)
 {
     // Create a buffer to receive the DATA packet
     std::vector<uint8_t> dataBuffer(params.blksize + 4); // Max size of a DATA packet with room for header
@@ -636,6 +636,8 @@ bool receiveData(int sock, uint16_t &receivedBlockID, std::string &data, TFTPOpa
     // Parse the received block ID from the DATA packet
     receivedBlockID = (dataBuffer[2] << 8) | dataBuffer[3];
 
+    serverPort = ntohs(senderAddr.sin_port);
+
     // Extract the data from the packet (skip the first 4 bytes which are the header)
     data.assign(dataBuffer.begin() + 4, dataBuffer.begin() + receivedBytes);
 
@@ -657,69 +659,6 @@ bool receiveData(int sock, uint16_t &receivedBlockID, std::string &data, TFTPOpa
     return true;
 }
 
-bool receiveData_without_options(int sock, uint16_t &receivedBlockID, std::string &data, TFTPOparams &params, const std::string &hostname)
-{
-    // Create a buffer to receive the DATA packet
-    std::vector<uint8_t> dataBuffer(1024); // Max size of a DATA packet
-
-    // Create sockaddr_in structure to store the sender's address
-    sockaddr_in senderAddr;
-    socklen_t senderAddrLen = sizeof(senderAddr);
-
-    // Receive the DATA packet and capture the sender's address
-    ssize_t receivedBytes = recvfrom(sock, dataBuffer.data(), dataBuffer.size(), 0, (struct sockaddr *)&senderAddr, &senderAddrLen);
-    if (receivedBytes == -1)
-    {
-        std::cerr << "Error: Failed to receive DATA." << std::endl;
-        return false;
-    }
-
-    // Check if the received packet is a DATA packet
-    if (receivedBytes < 4 || dataBuffer[0] != 0 || dataBuffer[1] != 3)
-    {
-        std::cerr << "Error: Received packet is not a DATA packet." << std::endl;
-        return false;
-    }
-
-    // Parse the received block ID from the DATA packet
-    receivedBlockID = (dataBuffer[2] << 8) | dataBuffer[3];
-
-    // Extract the data from the packet (skip the first 4 bytes which are the header)
-    data.assign(dataBuffer.begin() + 4, dataBuffer.begin() + receivedBytes);
-
-    // Create sockaddr_in structure for the remote server
-    sockaddr_in serverAddr;
-    std::memset(&serverAddr, 0, sizeof(serverAddr));
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = senderAddr.sin_port;
-    serverAddr.sin_addr = senderAddr.sin_addr;
-
-    // Send an ACK packet back to the server
-    std::vector<uint8_t> ackBuffer(4);
-    ackBuffer[0] = 0;                             // High byte of opcode (0 for ACK)
-    ackBuffer[1] = 4;                             // Low byte of opcode (4 for ACK)
-    ackBuffer[2] = (receivedBlockID >> 8) & 0xFF; // High byte of block ID
-    ackBuffer[3] = receivedBlockID & 0xFF;        // Low byte of block ID
-
-    ssize_t sentBytes = sendto(sock, ackBuffer.data(), ackBuffer.size(), 0, (struct sockaddr *)&serverAddr, sizeof(serverAddr));
-    if (sentBytes == -1)
-    {
-        std::cerr << "Error: Failed to send ACK." << std::endl;
-        return false;
-    }
-
-    sockaddr_in localAddr;
-    socklen_t addrLen = sizeof(localAddr);
-    if (getsockname(sock, (struct sockaddr *)&localAddr, &addrLen) == -1)
-    {
-        std::cerr << "Error: Failed to get local port." << std::endl;
-        return false;
-    }
-
-    std::cerr << "DATA " << hostname << ":" << ntohs(localAddr.sin_port) << ":" << ntohs(serverAddr.sin_port) << " " << receivedBlockID << std::endl;
-
-    return true;
-}
 bool sendAck(int sock, uint16_t blockID, const std::string &hostname, int serverPort, TFTPOparams &params)
 {
     // Create an ACK packet
@@ -857,7 +796,7 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
             while (!dataReceived && numRetriesRecvData < 4)
             {
 
-                dataReceived = receiveData(sock, receivedBlockID, data, params, hostname);
+                dataReceived = receiveData(sock, receivedBlockID, serverPort, data, params, hostname);
                 if (!dataReceived)
                 {
                     // Pokud ACK nebyl přijat včas, pokusit se znovu odeslat datový paket
@@ -909,13 +848,52 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
         }
         else
         {
-            std::cerr << "werehere..." << std::endl;
+            int numRetriesRecvData = 0;
+            bool dataReceived = false;
 
-            // Receive a DATA packet and store the data in 'data' with block size option
+            // Set the server's port and IP address in serverAddr
 
-            if (!receiveData_without_options(sock, receivedBlockID, data, params, hostname))
+            while (!dataReceived && numRetriesRecvData < 4)
             {
-                std::cerr << "Error: Failed to receive DATA." << std::endl;
+
+                dataReceived = receiveData(sock, receivedBlockID, serverPort, data, params, hostname);
+                if (!dataReceived)
+                {
+
+                    // Pokud ACK nebyl přijat včas, pokusit se znovu odeslat datový paket
+                    std::cout << "Warning: DATA not received for block " << blockID << ", retrying..." << std::endl;
+
+                    if (!sendAck(sock, blockID + 1, hostname, serverPort, params))
+                    {
+                        std::cout << "Error: Failed to send ACK before receiving DATA." << std::endl;
+                        close(sock);                   // Close the socket on error
+                        outputFile.close();            // Close the output file
+                        remove(localFilePath.c_str()); // Delete the partially downloaded file
+                        return 1;
+                    };
+
+                    numRetriesRecvData++;
+                }
+            }
+
+            serverAddr.sin_port = htons(serverPort);
+            inet_pton(AF_INET, hostname.c_str(), &(serverAddr.sin_addr));
+
+            if (!dataReceived)
+            {
+                // Datový paket nebyl potvrzen ACK ani po opakovaných pokusech, ukončit program
+                std::cerr << "Error: Failed to receive DATAss." << std::endl;
+                close(sock);                   // Close the socket on error
+                outputFile.close();            // Close the output file
+                remove(localFilePath.c_str()); // Delete the partially downloaded file
+                std::cerr << "Error: Data packet not acknowledged after multiple retries, exiting..." << std::endl;
+                return 1;
+            }
+
+            // Send an ACK packet before receiving DATA
+            if (!sendAck(sock, blockID + 1, hostname, serverPort, params))
+            {
+                std::cerr << "Error: Failed to send ACK before receiving DATA." << std::endl;
                 close(sock);                   // Close the socket on error
                 outputFile.close();            // Close the output file
                 remove(localFilePath.c_str()); // Delete the partially downloaded file
