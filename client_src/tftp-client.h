@@ -81,16 +81,6 @@ bool isAscii(const std::string &fileName);
 std::string determineMode(const std::string &filePath);
 
 /**
- * @brief Function to convert a hexadecimal string to a character string.
- *
- * This function converts a hexadecimal string to a character string.
- *
- * @param hexStr The hexadecimal string to convert.
- * @return The character string converted from the hexadecimal string.
- */
-std::string hexStringToCharString(const std::string &hexStr);
-
-/**
  * @brief Function to set the socket timeout.
  *
  * This function sets the socket timeout based on the provided socket and timeout value.
