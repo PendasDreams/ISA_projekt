@@ -9,7 +9,6 @@
 // TODO
 //      code review + komnety
 //      ověřit na referenčním stroji
-//      odelat file exists
 //      dokumentace
 
 bool fileExists(const std::string &filepath)
@@ -57,16 +56,18 @@ uint16_t checkDiskSpace(int size_of_file, const std::string &path)
     return 0;
 }
 
-// Function to send an error packet
 void sendError(int sockfd, uint16_t errorCode, const std::string &errorMsg, sockaddr_in &clientAddr, sockaddr_in &serverAddr)
 {
+    // Vytvoření chybového packetu
     TFTPPacket errorPacket;
     errorPacket.opcode = htons(ERROR);
     memcpy(errorPacket.data, &errorCode, sizeof(uint16_t));
     strcpy(errorPacket.data + sizeof(uint16_t), errorMsg.c_str());
 
+    // Odeslání chybového packetu klientovi
     sendto(sockfd, &errorPacket, sizeof(uint16_t) + errorMsg.size() + 1, 0, (struct sockaddr *)&clientAddr, sizeof(clientAddr));
 
+    // Výpis chybové zprávy na standardní chybový výstup
     std::cerr << "ERROR "
               << inet_ntoa(clientAddr.sin_addr) << ":"
               << ntohs(clientAddr.sin_port) << ":"
@@ -79,11 +80,11 @@ bool sendDataPacket(int sockfd, sockaddr_in &clientAddr, uint16_t blockNum, cons
     uint16_t opcode = htons(DATA);
     uint16_t blockNumNetwork = htons(blockNum);
 
-    size_t packetSize = sizeof(uint16_t) * 2 + dataSize; // 3 for opcode, blockNum, and blockSizeOption
+    size_t packetSize = sizeof(uint16_t) * 2 + dataSize;
 
     std::vector<uint8_t> dataPacket(packetSize);
 
-    // Copy the opcode, block number, and data into the packet
+    // Kopírování operačního kódu, čísla bloku a dat do packetu
     memcpy(dataPacket.data(), &opcode, sizeof(uint16_t));
     memcpy(dataPacket.data() + sizeof(uint16_t), &blockNumNetwork, sizeof(uint16_t));
     memcpy(dataPacket.data() + sizeof(uint16_t) * 2, data, dataSize);
@@ -92,14 +93,13 @@ bool sendDataPacket(int sockfd, sockaddr_in &clientAddr, uint16_t blockNum, cons
 
     if (sentBytes == -1)
     {
-        std::cout << "Error sending DATA packet for block " << blockNum << std::endl;
+        std::cout << "Chyba při odesílání datového packetu pro blok " << blockNum << std::endl;
         return false;
     }
 
     return true;
 }
 
-// Function to send an OACK packet
 bool sendOACK(int sockfd, sockaddr_in &clientAddr, std::map<std::string, int> &options_map, TFTPOparams &params, std::streampos filesize)
 {
 
@@ -162,7 +162,6 @@ bool sendOACK(int sockfd, sockaddr_in &clientAddr, std::map<std::string, int> &o
     return true;
 }
 
-// Function to send a file in DATA packets
 bool sendFileData(int sockfd, sockaddr_in &clientAddr, sockaddr_in &serverAddr, const std::string &filename, std::map<std::string, int> &options_map, TFTPOparams &params)
 {
     std::ifstream file;
@@ -175,24 +174,22 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, sockaddr_in &serverAddr, 
         return false;
     }
 
-    // Seek to the end of the file
+    // Získání velikosti souboru
     file.seekg(0, std::ios::end);
-
-    // Get the position of the file pointer, which is now at the end of the file
     std::streampos filesize = file.tellg();
 
     std::cout << "Size of the file: " << filesize << " bytes" << std::endl;
-
+    // návrat zpět na zčátek
     file.seekg(0, std::ios::beg);
 
-    // If "blksize" option is found in the map, use the specified block size
+    // Pokud byly nalezeny volitelné parametry, pokusit se je nastavit
     if (blocksizeOptionUsed || timeoutOptionUsed || transfersizeOptionUsed)
     {
         int retries = 0;
-        const int maxRetries = 4; // As per RFC specification
-
+        const int maxRetries = 4; // podle rfc specifikace
         bool ackReceived = false;
 
+        // Odeslání OACK s nastavenými volitelnými parametry
         while (retries < maxRetries)
         {
             if (!sendOACK(sockfd, clientAddr, options_map, params, filesize))
@@ -200,6 +197,7 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, sockaddr_in &serverAddr, 
                 continue;
             }
 
+            // Přijetí ACK pro potvrzení OACK
             if (receiveAck(sockfd, 0, clientAddr, serverAddr, params.timeout))
             {
                 ackReceived = true;
@@ -219,8 +217,9 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, sockaddr_in &serverAddr, 
         }
     }
 
-    std::vector<char> dataBuffer(params.blksize); // Use a vector with maximum size
-
+    // buffer pro data
+    std::vector<char> dataBuffer(params.blksize);
+    // počítadlo čísla bloku
     uint16_t blockNum = 1;
 
     bool lastnullpacket = false;
@@ -228,8 +227,8 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, sockaddr_in &serverAddr, 
 
     while (true)
     {
-        // Read data into the buffer
-        file.read(dataBuffer.data(), params.blksize); // Use dataBuffer.data() to get a pointer to the underlying array
+        // Načtení dat do bufferu
+        file.read(dataBuffer.data(), params.blksize);
 
         std::streamsize bytesRead = file.gcount();
 
@@ -237,20 +236,21 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, sockaddr_in &serverAddr, 
         {
             lastbytesread = bytesRead;
             int retries = 0;
-            const int maxRetries = 4; // As per RFC specification
+            const int maxRetries = 4;
             bool ackReceived = false;
 
             while (retries < maxRetries)
             {
 
+                // Odeslání dat
                 if (!sendDataPacket(sockfd, clientAddr, blockNum, dataBuffer.data(), bytesRead, bytesRead))
                 {
                     file.close();
                     return false;
                 }
 
-                // Wait for ACK for the sent block with timeout
-                if (receiveAck(sockfd, blockNum, clientAddr, serverAddr, params.timeout)) // Add timeout to receiveAck
+                // Čekání na ACK pro odeslaný blok
+                if (receiveAck(sockfd, blockNum, clientAddr, serverAddr, params.timeout))
                 {
                     ackReceived = true;
                     break;
@@ -309,7 +309,6 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, sockaddr_in &serverAddr, 
     file.close();
     return true;
 }
-// Function to receive an ACK packet
 bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr, sockaddr_in &serverAddr, int timeout)
 {
     TFTPPacket ackPacket;
@@ -317,7 +316,7 @@ bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr, 
 
     socklen_t clientAddrLen = sizeof(clientAddr);
 
-    // Set the timeout for recvfrom
+    // Nastavení timeoutu
     struct timeval tv;
     tv.tv_sec = timeout;
     tv.tv_usec = 0;
@@ -600,7 +599,6 @@ bool hasOptions(TFTPPacket &requestPacket, std::string &filename, std::string &m
     return true;
 }
 
-// Main TFTP server function
 void runTFTPServer(int port, const std::string &root_dirpath)
 {
     int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -707,7 +705,7 @@ void runTFTPServer(int port, const std::string &root_dirpath)
             // if (fileExists(filename))
             // {
             //     std::cout << "The file " << filename << " exists." << std::endl;
-            //     sendError(sockfd, ERROR_FILE_ALREADY_EXISTS, "File exists", clientAddr);
+            //     sendError(sockfd, ERROR_FILE_ALREADY_EXISTS, "File exists", clientAddr, serverAddr);
             // }
 
             if (transfersizeOptionUsed)

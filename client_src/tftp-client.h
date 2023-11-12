@@ -24,7 +24,7 @@
 #include <fcntl.h>
 #include <sys/statvfs.h>
 
-// volitelné options
+// Optional options
 struct TFTPOparams
 {
     uint16_t blksize;
@@ -32,10 +32,10 @@ struct TFTPOparams
     int transfersize;
 };
 
-// Počáteční block ID
+// Initial block ID
 uint16_t blockID = 0;
 
-// flags na rozpoznání jaké byly použity options
+// Flags to identify which options were used
 bool options_used = false;
 bool option_blksize_used = false;
 bool option_timeout_used = false;
@@ -50,7 +50,7 @@ const uint16_t ERROR_ILLEGAL_OPERATION = 4;
 const uint16_t ERROR_UNKNOWN_TRANSFER_ID = 5;
 const uint16_t ERROR_FILE_ALREADY_EXISTS = 6;
 
-// typy požadavků
+// Request types
 enum TFTPRequestType
 {
     READ_REQUEST,
@@ -58,194 +58,194 @@ enum TFTPRequestType
 };
 
 /**
- * @brief Funkce pro ověření, zda je soubor v ASCII formátu.
+ * @brief Function to check if a file is in ASCII format.
  *
- * Tato funkce zjišťuje, zda je zadaný soubor v ASCII formátu na základě jeho přípony.
- * Pokud je přípona "txt", "html" nebo "xml", soubor je považován za textový a je vrácena hodnota `true`.
- * V opačném případě je vrácena hodnota `false`, což indikuje binární formát.
+ * This function checks if the given file is in ASCII format based on its extension.
+ * If the extension is "txt," "html," or "xml," the file is considered to be in a text format, and it returns `true`.
+ * Otherwise, it returns `false`, indicating a binary format.
  *
- * @param fileName Název souboru ke kontrole.
- * @return True, pokud je soubor v ASCII formátu, jinak False.
+ * @param fileName The name of the file to check.
+ * @return True if the file is in ASCII format, otherwise False.
  */
 bool isAscii(const std::string &fileName);
 
 /**
- * @brief Funkce pro určení režimu TFTP na základě souboru.
+ * @brief Function to determine the TFTP mode based on a file's content.
  *
- * Tato funkce určuje režim přenosu TFTP ("netascii" nebo "octet") na základě obsahu souboru.
- * Pokud je soubor v ASCII formátu, je vrácen režim "netascii". V opačném případě je vrácen režim "octet".
+ * This function determines the TFTP transfer mode ("netascii" or "octet") based on the content of the file.
+ * If the file is in ASCII format, it returns "netascii." Otherwise, it returns "octet."
  *
- * @param filePath Cesta k souboru pro určení režimu.
- * @return Režim TFTP pro daný soubor ("netascii" nebo "octet").
+ * @param filePath The file path to determine the mode for.
+ * @return The TFTP mode for the given file ("netascii" or "octet").
  */
 std::string determineMode(const std::string &filePath);
 
 /**
- * @brief Funkce pro převod hexadecimálního řetězce na řetězec znaků.
+ * @brief Function to convert a hexadecimal string to a character string.
  *
- * Tato funkce převádí hexadecimální řetězec na řetězec znaků.
+ * This function converts a hexadecimal string to a character string.
  *
- * @param hexStr Hexadecimální řetězec k převodu.
- * @return Řetězec znaků převedený z hexadecimálního řetězce.
+ * @param hexStr The hexadecimal string to convert.
+ * @return The character string converted from the hexadecimal string.
  */
 std::string hexStringToCharString(const std::string &hexStr);
 
 /**
- * @brief Funkce pro nastavení timeoutu soketu.
+ * @brief Function to set the socket timeout.
  *
- * Tato funkce nastavuje timeout soketu na základě zadaného soketu a timeoutu.
+ * This function sets the socket timeout based on the provided socket and timeout value.
  *
- * @param sock Socket pro nastavení timeoutu.
- * @param timeout Timeout v sekundách.
- * @return True, pokud byl timeout úspěšně nastaven, jinak False.
+ * @param sock The socket to set the timeout for.
+ * @param timeout The timeout in seconds.
+ * @return True if the timeout was successfully set, otherwise False.
  */
 bool setSocketTimeout(int sock, int timeout);
 
 /**
- * @brief Funkce pro určení, zda je soubor v binárním formátu.
+ * @brief Function to check if a file is in binary format.
  *
- * Tato funkce zjišťuje, zda je zadaný soubor v binárním formátu na základě jeho přípony.
- * Pokud nemá soubor příponu nebo jeho přípona není v seznamu binárních formátů, je vrácena hodnota `true`.
- * Jinak je vrácena hodnota `false`, což indikuje textový formát.
+ * This function checks if the given file is in binary format based on its extension.
+ * If the file has no extension or its extension is not in the list of binary formats, it returns `true`.
+ * Otherwise, it returns `false`, indicating a text format.
  *
- * @param filename Název souboru ke kontrole.
- * @return True, pokud je soubor v binárním formátu, jinak False.
+ * @param filename The name of the file to check.
+ * @return True if the file is in binary format, otherwise False.
  */
 bool isBinaryFormat(const std::string &filename);
 
 /**
- * @brief Funkce pro zpracování chyb.
+ * @brief Function to handle errors.
  *
- * Tato funkce slouží k vytvoření a odeslání ERROR packetu serveru, pokud došlo k chybě během komunikace.
+ * This function is used to create and send an ERROR packet to the server if an error occurs during communication.
  *
- * @param sock Socket pro komunikaci.
- * @param hostname Hostname serveru.
- * @param srcPort Zdrojový port klienta.
- * @param serverPort Port serveru.
- * @param errorCode Kód chyby.
- * @param errorMsg Textová zpráva popisující chybu.
+ * @param sock The communication socket.
+ * @param hostname The server's hostname.
+ * @param srcPort The source port of the client.
+ * @param serverPort The server's port.
+ * @param errorCode The error code.
+ * @param errorMsg The text message describing the error.
  */
 void handleError(int sock, const std::string &hostname, int srcPort, int serverPort, uint16_t errorCode, const std::string &errorMsg);
 
 /**
- * @brief Funkce pro přijetí ACK (Acknowledgment) packetu a získání portu serveru.
+ * @brief Function to receive an ACK (Acknowledgment) packet and get the server's port.
  *
- * Tato funkce přijímá ACK packet a zároveň získává port serveru z odeslaného packetu.
- * Také získává volitelné parametry z OACK packetu, pokud je přijatý ACK packet označený jako OACK.
+ * This function receives an ACK packet and simultaneously retrieves the server's port from the sent packet.
+ * It also retrieves optional parameters from an OACK packet if the received ACK packet is marked as an OACK.
  *
- * @param sock Socket pro komunikaci.
- * @param receivedBlockID ID přijatého bloku dat.
- * @param serverPort Port serveru.
- * @param params Parametry TFTP komunikace, včetně velikosti bloku a timeoutu.
- * @param receivedOptions Mapa pro uložení volitelných parametrů OACK packetu.
- * @return True, pokud byl ACK úspěšně přijat a získána potřebná data, jinak False.
+ * @param sock The communication socket.
+ * @param receivedBlockID The ID of the received data block.
+ * @param serverPort The server's port.
+ * @param params TFTP communication parameters, including block size and timeout.
+ * @param receivedOptions A map to store optional parameters from the OACK packet.
+ * @return True if the ACK was successfully received and the necessary data was obtained, otherwise False.
  */
 bool receiveAck(int sock, uint16_t &receivedBlockID, int &serverPort, TFTPOparams &params, std::map<std::string, std::string> &receivedOptions);
 
 /**
- * @brief Funkce pro odeslání datového packetu.
+ * @brief Function to send a data packet.
  *
- * Tato funkce vytváří a odesílá datový packet obsahující zadaná data na základě aktuálního bloku dat.
+ * This function creates and sends a data packet containing the specified data based on the current data block.
  *
- * @param sock Socket pro komunikaci.
- * @param hostname Hostname serveru.
- * @param port Port serveru.
- * @param data Data k odeslání.
- * @return True, pokud byl datový packet úspěšně odeslán, jinak False.
+ * @param sock The communication socket.
+ * @param hostname The server's hostname.
+ * @param port The server's port.
+ * @param data The data to be sent.
+ * @return True if the data packet was successfully sent, otherwise False.
  */
 bool sendData(int sock, const std::string &hostname, int port, const std::string &data);
 
 /**
- * @brief Funkce pro odeslání souboru na server nebo nahrání ze vstupu.
+ * @brief Function to send a file to the server or upload from stdin.
  *
- * Tato funkce slouží k odeslání souboru na server nebo nahrání dat ze standardního vstupu (stdin).
- * Zároveň určuje režim TFTP na základě obsahu souboru a odesílá data v datových blocích na server.
+ * This function is used to send a file to the server or upload data from standard input (stdin).
+ * It also determines the TFTP mode based on the file's content and sends data in data blocks to the server.
  *
- * @param sock Socket pro komunikaci.
- * @param hostname Hostname serveru.
- * @param port Port serveru.
- * @param localFilePath Cesta k lokálnímu souboru pro odeslání nebo stdin pro načtení dat.
- * @param remoteFilePath Vzdálená cesta k souboru na serveru.
- * @param mode Režim TFTP pro přenos (netascii nebo octet).
- * @param options Volitelné parametry pro komunikaci s serverem.
- * @param params Parametry TFTP komunikace, včetně velikosti bloku a timeoutu.
- * @return 0, pokud byl přenos úspěšný, jinak 1.
+ * @param sock The communication socket.
+ * @param hostname The server's hostname.
+ * @param port The server's port.
+ * @param localFilePath The path to the local file to send or stdin to read data from.
+ * @param remoteFilePath The remote file path on the server.
+ * @param mode The TFTP transfer mode (netascii or octet).
+ * @param options Optional parameters for communication with the server.
+ * @param params TFTP communication parameters, including block size and timeout.
+ * @return 0 if the transfer was successful, otherwise 1.
  */
 int SendFile(int sock, const std::string &hostname, int port, const std::string &localFilePath, const std::string &remoteFilePath, std::string &mode, const std::string &options, TFTPOparams &params);
 
 /**
- * @brief Funkce pro odeslání RRQ (Read Request) packetu.
+ * @brief Function to send an RRQ (Read Request) packet.
  *
- * Tato funkce vytváří a odesílá TFTP RRQ packet na základě zadaných parametrů. Typ packetu je určen
- * parametrem `requestType` (READ_REQUEST nebo WRITE_REQUEST). Packet obsahuje název souboru,
- * režim přenosu a volitelné parametry "blksize", "timeout" a "tsize", pokud jsou aktivní.
+ * This function creates and sends a TFTP RRQ packet based on the provided parameters. The packet type is determined
+ * by the `requestType` parameter (READ_REQUEST or WRITE_REQUEST). The packet contains the file name, transfer mode,
+ * and optional parameters "blksize," "timeout," and "tsize" if active.
  *
- * @param requestType Typ requestu (READ_REQUEST nebo WRITE_REQUEST).
- * @param sock Socket pro komunikaci.
- * @param hostname Cílový server.
- * @param port Port, na který se má packet odeslat.
- * @param filepath Cesta k souboru na serveru.
- * @param mode Režim přenosu.
- * @param params Parametry TFTP komunikace, včetně velikosti bloku a timeoutu.
+ * @param requestType The request type (READ_REQUEST or WRITE_REQUEST).
+ * @param sock The communication socket.
+ * @param hostname The target server.
+ * @param port The port to send the packet to.
+ * @param filepath The server file path.
+ * @param mode The transfer mode.
+ * @param params TFTP communication parameters, including block size and timeout.
  */
 bool sendTFTPRequest(TFTPRequestType requestType, int sock, const std::string &hostname, int port, const std::string &filepath, const std::string &mode, TFTPOparams &params);
 
 /**
- * @brief Funkce pro příjem datového packetu.
+ * @brief Function to receive a data packet.
  *
- * Tato funkce přijímá datový packet ze zadaného socketu a extrahuje z něj informace o
- * bloku dat a samotná data. Přijatá data jsou uložena do parametru `data`.
+ * This function receives a data packet from the specified socket and extracts information about
+ * the data block and the actual data. The received data is stored in the `data` parameter.
  *
- * @param sock Socket pro komunikaci.
- * @param receivedBlockID ID přijatého bloku dat.
- * @param serverPort Port serveru.
- * @param data Přijatá data.
- * @param params Parametry TFTP komunikace, včetně velikosti bloku a timeoutu.
- * @param hostname Hostname serveru.
- * @return True, pokud byla data úspěšně přijata, jinak False.
+ * @param sock The communication socket.
+ * @param receivedBlockID The ID of the received data block.
+ * @param serverPort The server's port.
+ * @param data The received data.
+ * @param params TFTP communication parameters, including block size and timeout.
+ * @param hostname The server's hostname.
+ * @return True if the data was successfully received, otherwise False.
  */
 bool receiveData(int sock, uint16_t &receivedBlockID, int &serverPort, std::string &data, TFTPOparams &params, const std::string &hostname);
 
 /**
- * @brief Funkce pro odeslání potvrzení (ACK) serveru.
+ * @brief Function to send an acknowledgment (ACK) to the server.
  *
- * Tato funkce vytváří a odesílá TFTP ACK packet s určeným blokem dat na základě přijatých dat.
+ * This function creates and sends a TFTP ACK packet with the specified data block to acknowledge.
  *
- * @param sock Socket pro komunikaci.
- * @param blockID ID bloku dat, který se má potvrdit.
- * @param hostname Hostname serveru.
- * @param serverPort Port serveru.
- * @param params Parametry TFTP komunikace, včetně velikosti bloku a timeoutu.
- * @return True, pokud bylo ACK úspěšně odesláno, jinak False.
+ * @param sock The communication socket.
+ * @param blockID The data block ID to acknowledge.
+ * @param hostname The server's hostname.
+ * @param serverPort The server's port.
+ * @param params TFTP communication parameters, including block size and timeout.
+ * @return True if the ACK was successfully sent, otherwise False.
  */
 bool sendAck(int sock, uint16_t blockID, const std::string &hostname, int serverPort, TFTPOparams &params);
 
 /**
- * @brief Funkce pro příjem souboru ze serveru.
+ * @brief Function to receive a file from the server.
  *
- * Tato funkce slouží k příjmu souboru ze serveru pomocí TFTP protokolu. Komunikace probíhá
- * pomocí RRQ a příjmu datových packetů. Přijatá data jsou ukládána do lokálního souboru.
+ * This function is used to receive a file from the server using the TFTP protocol. Communication is done
+ * via RRQ and the reception of data packets. The received data is saved to a local file.
  *
- * @param sock Socket pro komunikaci.
- * @param hostname Hostname serveru.
- * @param port Port serveru.
- * @param localFilePath Cesta k lokálnímu souboru, do kterého se má uložit přijatý obsah.
- * @param remoteFilePath Cesta k souboru na serveru.
- * @param mode Režim přenosu.
- * @param options Volitelné parametry pro komunikaci.
- * @param params Parametry TFTP komunikace, včetně velikosti bloku a timeoutu.
- * @return 0 pokud byl přenos úspěšný, jinak 1.
+ * @param sock The communication socket.
+ * @param hostname The server's hostname.
+ * @param port The server's port.
+ * @param localFilePath The path to the local file where the received content should be saved.
+ * @param remoteFilePath The remote file path on the server.
+ * @param mode The transfer mode.
+ * @param options Optional parameters for communication.
+ * @param params TFTP communication parameters, including block size and timeout.
+ * @return 0 if the transfer was successful, otherwise 1.
  */
 int receive_file(int sock, const std::string &hostname, int port, const std::string &localFilePath, const std::string &remoteFilePath, std::string &mode, const std::string &options, TFTPOparams &params);
 
 /**
- * @brief Funkce pro parsování volitelných parametrů TFTP.
+ * @brief Function to parse optional TFTP parameters.
  *
- * Tato funkce slouží k parsování řetězce volitelných parametrů přijatých od serveru (OACK).
- * Rozpoznává parametry "blksize", "timeout" a "tsize" a ukládá je do struktury `TFTPOparams`.
+ * This function is used to parse the string of optional parameters received from the server (OACK).
+ * It recognizes parameters such as "blksize," "timeout," and "tsize" and stores them in the `TFTPOparams` structure.
  *
- * @param Oparamstring Řetězec obsahující volitelné parametry.
- * @param Oparams Struktura pro ukládání volitelných parametrů.
- * @return True, pokud byly parametry úspěšně načteny, jinak False.
+ * @param Oparamstring The string containing optional parameters.
+ * @param Oparams The structure for storing optional parameters.
+ * @return True if the parameters were successfully parsed, otherwise False.
  */
 bool parseTFTPParameters(const std::string &Oparamstring, TFTPOparams &Oparams);
