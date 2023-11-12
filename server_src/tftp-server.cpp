@@ -14,13 +14,12 @@
 #include <thread>
 
 // TODO
-//      ověřit chybový stavy client error sending a vypisování v3ude
-//      code review
+//      code review + komnety
 //      ověřit na referenčním stroji
 //      odelat file exists
 //      dokumentace
 
-bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr, int timeout);
+bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr, sockaddr_in &serverAddr, int timeout);
 
 // TFTP opcodes
 const uint16_t RRQ = 1;
@@ -64,7 +63,7 @@ struct TFTPOparams
     int transfersize;
 };
 
-void sendError(int sockfd, uint16_t errorCode, const std::string &errorMsg, sockaddr_in &clientAddr);
+void sendError(int sockfd, uint16_t errorCode, const std::string &errorMsg, sockaddr_in &clientAddr, sockaddr_in &serverAddr);
 
 bool fileExists(const std::string &filepath)
 {
@@ -72,7 +71,7 @@ bool fileExists(const std::string &filepath)
     return file.good();
 }
 
-int handleIncomingPacket(int sockfd, sockaddr_in &clientAddr, int opcode)
+int handleIncomingPacket(int sockfd, sockaddr_in &clientAddr, int opcode, sockaddr_in &serverAddr)
 {
     switch (opcode)
     {
@@ -82,7 +81,7 @@ int handleIncomingPacket(int sockfd, sockaddr_in &clientAddr, int opcode)
         return 0;
 
     default:
-        sendError(sockfd, ERROR_ILLEGAL_OPERATION, "Illegal operation", clientAddr);
+        sendError(sockfd, ERROR_ILLEGAL_OPERATION, "Illegal operation", clientAddr, serverAddr);
         std::cout << "Illegal operation detected!" << std::endl;
         return 1;
     }
@@ -112,7 +111,7 @@ uint16_t checkDiskSpace(int size_of_file, const std::string &path)
 }
 
 // Function to send an error packet
-void sendError(int sockfd, uint16_t errorCode, const std::string &errorMsg, sockaddr_in &clientAddr)
+void sendError(int sockfd, uint16_t errorCode, const std::string &errorMsg, sockaddr_in &clientAddr, sockaddr_in &serverAddr)
 {
     TFTPPacket errorPacket;
     errorPacket.opcode = htons(ERROR);
@@ -120,6 +119,12 @@ void sendError(int sockfd, uint16_t errorCode, const std::string &errorMsg, sock
     strcpy(errorPacket.data + sizeof(uint16_t), errorMsg.c_str());
 
     sendto(sockfd, &errorPacket, sizeof(uint16_t) + errorMsg.size() + 1, 0, (struct sockaddr *)&clientAddr, sizeof(clientAddr));
+
+    std::cerr << "ERROR "
+              << inet_ntoa(clientAddr.sin_addr) << ":"
+              << ntohs(clientAddr.sin_port) << ":"
+              << ntohs(serverAddr.sin_port) << " "
+              << errorCode << " \"" << errorMsg << "\"" << std::endl;
 }
 
 bool sendDataPacket(int sockfd, sockaddr_in &clientAddr, uint16_t blockNum, const char *data, size_t dataSize, uint16_t blockSize)
@@ -211,7 +216,7 @@ bool sendOACK(int sockfd, sockaddr_in &clientAddr, std::map<std::string, int> &o
 }
 
 // Function to send a file in DATA packets
-bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filename, std::map<std::string, int> &options_map, TFTPOparams &params)
+bool sendFileData(int sockfd, sockaddr_in &clientAddr, sockaddr_in &serverAddr, const std::string &filename, std::map<std::string, int> &options_map, TFTPOparams &params)
 {
     std::ifstream file;
 
@@ -219,7 +224,7 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filena
 
     if (!file)
     {
-        sendError(sockfd, ERROR_FILE_NOT_FOUND, "File not found", clientAddr);
+        sendError(sockfd, ERROR_FILE_NOT_FOUND, "Illegal operation", clientAddr, serverAddr);
         return false;
     }
 
@@ -248,7 +253,7 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filena
                 continue;
             }
 
-            if (receiveAck(sockfd, 0, clientAddr, params.timeout))
+            if (receiveAck(sockfd, 0, clientAddr, serverAddr, params.timeout))
             {
                 ackReceived = true;
                 break;
@@ -298,7 +303,7 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filena
                 }
 
                 // Wait for ACK for the sent block with timeout
-                if (receiveAck(sockfd, blockNum, clientAddr, params.timeout)) // Add timeout to receiveAck
+                if (receiveAck(sockfd, blockNum, clientAddr, serverAddr, params.timeout)) // Add timeout to receiveAck
                 {
                     ackReceived = true;
                     break;
@@ -345,7 +350,7 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filena
         }
 
         // Čekat na potvrzení pro poslední prázdný DATA packet
-        if (!receiveAck(sockfd, blockNum, clientAddr, params.timeout))
+        if (!receiveAck(sockfd, blockNum, clientAddr, serverAddr, params.timeout))
         {
             std::cout << "Failed to receive ACK for the last null DATA packet" << std::endl;
             file.close();
@@ -358,7 +363,7 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filena
     return true;
 }
 // Function to receive an ACK packet
-bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr, int timeout)
+bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr, sockaddr_in &serverAddr, int timeout)
 {
     TFTPPacket ackPacket;
     memset(&ackPacket, 0, sizeof(TFTPPacket));
@@ -387,7 +392,7 @@ bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr, 
                 return false;
             }
             std::cout << "Error receiving ACK packet" << std::endl;
-            sendError(sockfd, ERROR_UNDEFINED, "Error receiving ACK packet", clientAddr);
+            sendError(sockfd, ERROR_UNDEFINED, "Illegal operation", clientAddr, serverAddr);
 
             return false;
         }
@@ -396,7 +401,7 @@ bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr, 
         {
             // Invalid ACK packet
             std::cout << "Received an invalid ACK packet" << std::endl;
-            sendError(sockfd, ERROR_UNDEFINED, "Received an invalid ACK packet", clientAddr);
+            sendError(sockfd, ERROR_UNDEFINED, "Illegal operation", clientAddr, serverAddr);
 
             return false;
         }
@@ -424,7 +429,7 @@ bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr, 
             {
                 // Received an out-of-order ACK (unexpected)
                 std::cout << "Received an unexpected ACK for block " << blockNum << std::endl;
-                sendError(sockfd, ERROR_UNKNOWN_TRANSFER_ID, "Unexpected ACK ID for block", clientAddr);
+                sendError(sockfd, ERROR_UNKNOWN_TRANSFER_ID, "Illegal operation", clientAddr, serverAddr);
                 return false;
             }
         }
@@ -432,7 +437,7 @@ bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr, 
         {
             // Received an unexpected packet (not an ACK)
             std::cout << "Received an unexpected packet with opcode " << opcode << std::endl;
-            sendError(sockfd, ERROR_ILLEGAL_OPERATION, "ERROR_ILLEGAL_OPERATION", clientAddr);
+            sendError(sockfd, ERROR_ILLEGAL_OPERATION, "Illegal operation", clientAddr, serverAddr);
             return false;
         }
     }
@@ -507,14 +512,14 @@ bool receiveDataPacket(int sockfd, sockaddr_in &clientAddr, sockaddr_in &serverA
         {
             // Received a duplicate DATA packet (ignore)
             std::cout << "Received a duplicate DATA packet for block " << blockNum << std::endl;
-            sendError(sockfd, ERROR_UNKNOWN_TRANSFER_ID, "Duplicate DATA packet", clientAddr);
+            sendError(sockfd, ERROR_UNKNOWN_TRANSFER_ID, "Illegal operation", clientAddr, serverAddr);
             return false;
         }
         else
         {
             // Received an out-of-order DATA packet (unexpected)
             std::cout << "Received an unexpected DATA packet for block " << blockNum << std::endl;
-            sendError(sockfd, ERROR_UNKNOWN_TRANSFER_ID, "Unexpected DATA packet", clientAddr);
+            sendError(sockfd, ERROR_UNKNOWN_TRANSFER_ID, "Illegal operation", clientAddr, serverAddr);
             return false;
         }
     }
@@ -522,7 +527,7 @@ bool receiveDataPacket(int sockfd, sockaddr_in &clientAddr, sockaddr_in &serverA
     {
         // Received an unexpected packet (not a DATA packet)
         std::cout << "Received an unexpected packet with opcode " << opcode << std::endl;
-        sendError(sockfd, ERROR_ILLEGAL_OPERATION, "Unexpected packet with opcode", clientAddr);
+        sendError(sockfd, ERROR_ILLEGAL_OPERATION, "Illegal operation", clientAddr, serverAddr);
         return false;
     }
 }
@@ -720,7 +725,7 @@ void runTFTPServer(int port, const std::string &root_dirpath)
             optionsString += pair.first + "=" + std::to_string(pair.second) + " ";
         }
 
-        if (handleIncomingPacket(sockfd, clientAddr, opcode) == 1)
+        if (handleIncomingPacket(sockfd, clientAddr, opcode, serverAddr) == 1)
         {
             continue;
         }
@@ -736,7 +741,7 @@ void runTFTPServer(int port, const std::string &root_dirpath)
                       << optionsString
                       << std::endl;
 
-            if (!sendFileData(sockfd, clientAddr, filename, options_map, params))
+            if (!sendFileData(sockfd, clientAddr, serverAddr, filename, options_map, params))
             {
                 std::cout << "Error sending file data" << std::endl;
             }
@@ -766,7 +771,7 @@ void runTFTPServer(int port, const std::string &root_dirpath)
                 if (diskspace == ERROR_DISK_FULL)
                 {
                     std::cout << "ERROR_DISK_FULL!" << std::endl;
-                    sendError(sockfd, ERROR_DISK_FULL, "Disk full", clientAddr);
+                    sendError(sockfd, ERROR_DISK_FULL, "Illegal operation", clientAddr, serverAddr);
                     continue;
                 }
             }
@@ -775,7 +780,7 @@ void runTFTPServer(int port, const std::string &root_dirpath)
 
             if (!file)
             {
-                sendError(sockfd, ERROR_ACCESS_VIOLATION, "Access violation", clientAddr);
+                sendError(sockfd, ERROR_ACCESS_VIOLATION, "Illegal operation", clientAddr, serverAddr);
                 continue;
             }
             else
@@ -864,7 +869,7 @@ void runTFTPServer(int port, const std::string &root_dirpath)
 
         else
         {
-            sendError(sockfd, ERROR_UNDEFINED, "Undefined request", clientAddr);
+            sendError(sockfd, ERROR_UNDEFINED, "Illegal operation", clientAddr, serverAddr);
         }
         memset(&requestPacket, 0, sizeof(requestPacket));
     }

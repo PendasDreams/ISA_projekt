@@ -359,7 +359,7 @@ int SendFile(int sock, const std::string &hostname, int port, const std::string 
     if (writeRequestRetries == 4)
     {
         std::cout << "Error: Failed to receive ACK or OACK after multiple WRQ attempts. Exiting..." << std::endl;
-        handleError(sock, hostname, port, 0, 0, "Failed to receive ACK or OACK after WRQ");
+        handleError(sock, hostname, port, 0, ERROR_UNDEFINED, "Failed to receive ACK or OACK after WRQ");
         close(sock);
         return 1;
     }
@@ -752,6 +752,8 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
 
                 if (!rrqAckReceived)
                 {
+                    std::cout << "RequestRetries:" << RequestRetries << std::endl;
+
                     sendTFTPRequest(READ_REQUEST, sock, hostname, port, remoteFilePath, mode, params);
                     std::cout << "Warning: ACK not received after RRQ, retrying..." << std::endl;
                     RequestRetries++;
@@ -761,7 +763,7 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
             if (RequestRetries == 4)
             {
                 std::cout << "Error: Failed to receive ACK or OACK after multiple WRQ attempts. Exiting..." << std::endl;
-                handleError(sock, hostname, port, 0, 0, "Failed to receive ACK or OACK after WRQ");
+                handleError(sock, hostname, port, 0, ERROR_UNDEFINED, "Failed to receive ACK or OACK after WRQ");
                 close(sock);
                 return 1;
             }
@@ -869,13 +871,18 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
                         remove(localFilePath.c_str()); // Delete the partially downloaded file
                         return 1;
                     };
-
-                    numRetriesRecvData++;
                 }
                 if (!dataReceived && firstDataRecv == false)
                 {
                     sendTFTPRequest(READ_REQUEST, sock, hostname, port, remoteFilePath, mode, params);
                 }
+                if (numRetriesRecvData == 4)
+                {
+                    std::cout << "Error: Failed to receive ACK or OACK after multiple WRQ attempts. Exiting..." << std::endl;
+                    handleError(sock, hostname, port, 0, ERROR_UNDEFINED, "Failed to receive ACK or OACK after WRQ");
+                    close(sock);
+                }
+                numRetriesRecvData++;
             }
             firstDataRecv = true;
 
