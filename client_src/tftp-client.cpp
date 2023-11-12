@@ -6,7 +6,6 @@ bool isAscii(const std::string &fileName)
     size_t dotPos = fileName.find_last_of('.');
     if (dotPos == std::string::npos)
     {
-        // std::cerr << "Invalid file name: " << fileName << std::endl;
         return false; // Neplatný název souboru
     }
 
@@ -15,13 +14,11 @@ bool isAscii(const std::string &fileName)
     // Porovnejte příponu s podporovanými režimy TFTP
     if (fileExtension == "txt" || fileExtension == "html" || fileExtension == "xml")
     {
-        // std::cerr << "file is ascii " << fileName << std::endl;
 
         return true; // Textový režim ('netascii')
     }
     else
     {
-        // std::cerr << "file is octet " << fileName << std::endl;
 
         return false; // Binární režim ('octet')
     }
@@ -67,7 +64,7 @@ bool setSocketTimeout(int sock, int timeout)
     tv.tv_usec = 0;
     if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0)
     {
-        std::cerr << "Error: Failed to set socket timeout." << std::endl;
+        std::cout << "Error: Failed to set socket timeout." << std::endl;
         return false;
     }
     return true;
@@ -120,7 +117,7 @@ void handleError(int sock, const std::string &hostname, int srcPort, int dstPort
     ssize_t sentBytes = sendto(sock, errorBuffer, sizeof(errorBuffer), 0, (struct sockaddr *)&serverAddr, sizeof(serverAddr));
     if (sentBytes == -1)
     {
-        std::cerr << "Error: Failed to send ERROR." << std::endl;
+        std::cout << "Error: Failed to send ERROR." << std::endl;
     }
 
     std::cerr << "ERROR " << hostname << ":" << srcPort << ":" << dstPort << " " << errorCode << " \"" << errorMsg << "\"" << std::endl;
@@ -142,21 +139,21 @@ bool receiveAck(int sock, uint16_t &receivedBlockID, int &serverPort, TFTPOparam
     ssize_t receivedBytes = recvfrom(sock, packetBuffer, sizeof(packetBuffer), 0, (struct sockaddr *)&senderAddr, &senderAddrLen);
     if (receivedBytes == -1)
     {
-        std::cerr << "Error: Failed to receive packet." << std::endl;
+        std::cout << "Error: Failed to receive packet." << std::endl;
         return false;
     }
 
     // Check if the received packet is an ACK or OACK packet
     if (receivedBytes < 4)
     {
-        std::cerr << "Error: Received packet is too short to be an ACK or OACK." << std::endl;
+        std::cout << "Error: Received packet is too short to be an ACK or OACK." << std::endl;
         return false;
     }
 
     uint16_t opcode = (packetBuffer[0] << 8) | packetBuffer[1];
     if (opcode != 4 && opcode != 6)
     {
-        std::cerr << "Error: Received packet is not an ACK or OACK." << std::endl;
+        std::cout << "Error: Received packet is not an ACK or OACK." << std::endl;
         return false;
     }
 
@@ -211,9 +208,9 @@ bool receiveAck(int sock, uint16_t &receivedBlockID, int &serverPort, TFTPOparam
                 if (intblksize > params.blksize)
                 {
 
-                    std::cerr << "Error: Received blksize option does not match the requested value." << std::endl;
-                    std::cerr << "Error: Requested value from server: " << pair.second << std::endl;
-                    std::cerr << "Error: Requested value from client: " << std::to_string(params.blksize) << std::endl;
+                    std::cout << "Error: Received blksize option does not match the requested value." << std::endl;
+                    std::cout << "Error: Requested value from server: " << pair.second << std::endl;
+                    std::cout << "Error: Requested value from client: " << std::to_string(params.blksize) << std::endl;
                     return false;
                 }
                 else
@@ -223,9 +220,9 @@ bool receiveAck(int sock, uint16_t &receivedBlockID, int &serverPort, TFTPOparam
             }
             else if (pair.first == "timeout" && (pair.second != std::to_string(params.timeout_max)))
             {
-                std::cerr << "Error: Received timeout option does not match the requested value." << std::endl;
-                std::cerr << "Error: Requested value from server: " << pair.second << std::endl;
-                std::cerr << "Error: Requested value from client: " << std::to_string(params.timeout_max) << std::endl;
+                std::cout << "Error: Received timeout option does not match the requested value." << std::endl;
+                std::cout << "Error: Requested value from server: " << pair.second << std::endl;
+                std::cout << "Error: Requested value from client: " << std::to_string(params.timeout_max) << std::endl;
                 return false;
             }
             else if (pair.first == "tsize")
@@ -248,7 +245,7 @@ bool receiveAck(int sock, uint16_t &receivedBlockID, int &serverPort, TFTPOparam
                 }
                 else
                 {
-                    std::cerr << "Error getting disk space information." << std::endl;
+                    std::cout << "Error getting disk space information." << std::endl;
                     // TODO ERROR SEND
                 }
             }
@@ -298,12 +295,12 @@ bool sendData(int sock, const std::string &hostname, int port, const std::string
     ssize_t sentBytes = sendto(sock, dataBuffer.data(), dataBuffer.size(), 0, (struct sockaddr *)&serverAddr, sizeof(serverAddr));
     if (sentBytes == -1)
     {
-        std::cerr << "Error: Failed to send DATA." << std::endl;
+        std::cout << "Error: Failed to send DATA." << std::endl;
         return false;
     }
     std::cout << std::dec;
 
-    // std::cerr << "Sent DATA packet with size: " << dataBuffer.size() << " bytes, block ID: " << blockID << std::endl; // Print the size and block ID
+    // std::cout << "Sent DATA packet with size: " << dataBuffer.size() << " bytes, block ID: " << blockID << std::endl; // Print the size and block ID
 
     return true;
 }
@@ -324,7 +321,7 @@ int SendFile(int sock, const std::string &hostname, int port, const std::string 
 
     if (!file)
     {
-        std::cerr << "Error: Failed to open file for reading sendfile." << std::endl;
+        std::cout << "Error: Failed to open file for reading sendfile." << std::endl;
         close(sock); // Close the socket on error
         return 1;
     }
@@ -354,14 +351,14 @@ int SendFile(int sock, const std::string &hostname, int port, const std::string 
 
         if (!wrqAckReceived)
         {
-            std::cerr << "Warning: ACK not received after WRQ, retrying..." << std::endl;
+            std::cout << "Warning: ACK not received after WRQ, retrying..." << std::endl;
             writeRequestRetries++;
         }
     }
 
     if (writeRequestRetries == 4)
     {
-        std::cerr << "Error: Failed to receive ACK or OACK after multiple WRQ attempts. Exiting..." << std::endl;
+        std::cout << "Error: Failed to receive ACK or OACK after multiple WRQ attempts. Exiting..." << std::endl;
         handleError(sock, hostname, port, 0, 0, "Failed to receive ACK or OACK after WRQ");
         close(sock);
         return 1;
@@ -409,7 +406,7 @@ int SendFile(int sock, const std::string &hostname, int port, const std::string 
                 if (!ackReceived)
                 {
                     // Pokud ACK nebyl přijat včas, pokusit se znovu odeslat datový paket
-                    std::cerr << "Warning: ACK not received for block " << blockID << ", retrying..." << std::endl;
+                    std::cout << "Warning: ACK not received for block " << blockID << ", retrying..." << std::endl;
 
                     if (!sendData(sock, hostname, serverPort, std::string(buffer, bytesRead)))
                     {
@@ -422,7 +419,7 @@ int SendFile(int sock, const std::string &hostname, int port, const std::string 
             if (!ackReceived)
             {
                 // Datový paket nebyl potvrzen ACK ani po opakovaných pokusech, ukončit program
-                std::cerr << "Error: Data packet not acknowledged after multiple retries, exiting..." << std::endl;
+                std::cout << "Error: Data packet not acknowledged after multiple retries, exiting..." << std::endl;
                 close(sock);
                 return 1;
             }
@@ -477,7 +474,7 @@ int SendFile(int sock, const std::string &hostname, int port, const std::string 
             if (!ackReceived)
             {
                 // Pokud ACK nebyl přijat včas, pokusit se znovu odeslat prázdný DATA packet
-                std::cerr << "Warning: ACK not received for the last null DATA packet, retrying..." << std::endl;
+                std::cout << "Warning: ACK not received for the last null DATA packet, retrying..." << std::endl;
                 if (!sendData(sock, hostname, serverPort, ""))
                 {
                     return 1;
@@ -489,7 +486,7 @@ int SendFile(int sock, const std::string &hostname, int port, const std::string 
         if (!ackReceived)
         {
             // Prázdný DATA packet nebyl potvrzen ACK ani po opakovaných pokusech, ukončit program
-            std::cerr << "Error: Last null DATA packet not acknowledged after multiple retries, exiting..." << std::endl;
+            std::cout << "Error: Last null DATA packet not acknowledged after multiple retries, exiting..." << std::endl;
             close(sock);
             return 1;
         }
@@ -585,7 +582,7 @@ bool sendTFTPRequest(TFTPRequestType requestType, int sock, const std::string &h
     ssize_t sentBytes = sendto(sock, requestBuffer.data(), requestBuffer.size(), 0, (struct sockaddr *)&serverAddr, sizeof(serverAddr));
     if (sentBytes == -1)
     {
-        std::cerr << "Error: Failed to send " << (requestType == READ_REQUEST ? "RRQ" : "WRQ") << " packet." << std::endl;
+        std::cout << "Error: Failed to send " << (requestType == READ_REQUEST ? "RRQ" : "WRQ") << " packet." << std::endl;
         return false;
     }
 
@@ -622,14 +619,14 @@ bool receiveData(int sock, uint16_t &receivedBlockID, int &serverPort, std::stri
     ssize_t receivedBytes = recvfrom(sock, dataBuffer.data(), dataBuffer.size(), 0, (struct sockaddr *)&senderAddr, &senderAddrLen);
     if (receivedBytes == -1)
     {
-        std::cerr << "Error: Failed to receive DATA." << std::endl;
+        std::cout << "Error: Failed to receive DATA." << std::endl;
         return false;
     }
 
     // Check if the received packet is a DATA packet
     if (receivedBytes < 4 || dataBuffer[0] != 0 || dataBuffer[1] != 3)
     {
-        std::cerr << "Error: Received packet is not a DATA packet." << std::endl;
+        std::cout << "Error: Received packet is not a DATA packet." << std::endl;
         return false;
     }
 
@@ -652,7 +649,7 @@ bool receiveData(int sock, uint16_t &receivedBlockID, int &serverPort, std::stri
     // Print the desired format
     std::cerr << "DATA " << srcIP << ":" << srcPort << ":" << dstPort << " " << receivedBlockID << std::endl;
 
-    // std::cerr << "Sent DATA packet with size: " << dataBuffer.size() << " bytes, block ID: " << blockID << std::endl; // Print the size and block ID
+    // std::cout << "Sent DATA packet with size: " << dataBuffer.size() << " bytes, block ID: " << blockID << std::endl; // Print the size and block ID
 
     blockID = receivedBlockID + 1;
 
@@ -677,7 +674,7 @@ bool sendAck(int sock, uint16_t blockID, const std::string &hostname, int server
     // Convert the hostname to an IP address and set it in serverAddr
     if (inet_pton(AF_INET, hostname.c_str(), &(serverAddr.sin_addr)) <= 0)
     {
-        std::cerr << "Error: Failed to convert hostname to IP address." << std::endl;
+        std::cout << "Error: Failed to convert hostname to IP address." << std::endl;
         return false;
     }
 
@@ -685,11 +682,11 @@ bool sendAck(int sock, uint16_t blockID, const std::string &hostname, int server
     ssize_t sentBytes = sendto(sock, ackBuffer.data(), ackBuffer.size(), 0, (struct sockaddr *)&serverAddr, sizeof(serverAddr));
     if (sentBytes == -1)
     {
-        std::cerr << "Error: Failed to send ACK." << std::endl;
+        std::cout << "Error: Failed to send ACK." << std::endl;
         return false;
     }
 
-    // std::cerr << "Sent ACK with block ID: " << blockID << " to server port: " << serverPort << std::endl;
+    // std::cout << "Sent ACK with block ID: " << blockID << " to server port: " << serverPort << std::endl;
 
     return true;
 }
@@ -703,7 +700,7 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
 
     if (!outputFile.is_open())
     {
-        std::cerr << "Error: Failed to open file for writing." << std::endl;
+        std::cout << "Error: Failed to open file for writing." << std::endl;
         close(sock); // Close the socket on error
         return 1;
     }
@@ -756,14 +753,14 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
                 if (!rrqAckReceived)
                 {
                     sendTFTPRequest(READ_REQUEST, sock, hostname, port, remoteFilePath, mode, params);
-                    std::cerr << "Warning: ACK not received after RRQ, retrying..." << std::endl;
+                    std::cout << "Warning: ACK not received after RRQ, retrying..." << std::endl;
                     RequestRetries++;
                 }
             }
 
             if (RequestRetries == 4)
             {
-                std::cerr << "Error: Failed to receive ACK or OACK after multiple WRQ attempts. Exiting..." << std::endl;
+                std::cout << "Error: Failed to receive ACK or OACK after multiple WRQ attempts. Exiting..." << std::endl;
                 handleError(sock, hostname, port, 0, 0, "Failed to receive ACK or OACK after WRQ");
                 close(sock);
                 return 1;
@@ -784,7 +781,7 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
             // Send an ACK packet before receiving DATA
             if (!sendAck(sock, blockID, hostname, serverPort, params))
             {
-                std::cerr << "Error: Failed to send ACK before receiving DATA." << std::endl;
+                std::cout << "Error: Failed to send ACK before receiving DATA." << std::endl;
                 close(sock);                   // Close the socket on error
                 outputFile.close();            // Close the output file
                 remove(localFilePath.c_str()); // Delete the partially downloaded file
@@ -819,12 +816,12 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
             if (!dataReceived)
             {
                 // Datový paket nebyl potvrzen ACK ani po opakovaných pokusech, ukončit program
-                std::cerr << "Error: Failed to receive DATAss." << std::endl;
+                std::cout << "Error: Failed to receive DATAss." << std::endl;
                 close(sock);                   // Close the socket on error
                 outputFile.close();            // Close the output file
                 remove(localFilePath.c_str()); // Delete the partially downloaded file
                 return 1;
-                std::cerr << "Error: Data packet not acknowledged after multiple retries, exiting..." << std::endl;
+                std::cout << "Error: Data packet not acknowledged after multiple retries, exiting..." << std::endl;
 
                 return 1;
             }
@@ -888,18 +885,18 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
             if (!dataReceived)
             {
                 // Datový paket nebyl potvrzen ACK ani po opakovaných pokusech, ukončit program
-                std::cerr << "Error: Failed to receive DATA." << std::endl;
+                std::cout << "Error: Failed to receive DATA." << std::endl;
                 close(sock);                   // Close the socket on error
                 outputFile.close();            // Close the output file
                 remove(localFilePath.c_str()); // Delete the partially downloaded file
-                std::cerr << "Error: Data packet not acknowledged after multiple retries, exiting..." << std::endl;
+                std::cout << "Error: Data packet not acknowledged after multiple retries, exiting..." << std::endl;
                 return 1;
             }
 
             // Send an ACK packet before receiving DATA
             if (!sendAck(sock, blockID + 1, hostname, serverPort, params))
             {
-                std::cerr << "Error: Failed to send ACK before receiving DATA." << std::endl;
+                std::cout << "Error: Failed to send ACK before receiving DATA." << std::endl;
                 close(sock);                   // Close the socket on error
                 outputFile.close();            // Close the output file
                 remove(localFilePath.c_str()); // Delete the partially downloaded file
@@ -910,7 +907,7 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
         // Check if the received block ID is the expected one
         if (receivedBlockID != blockID + 1)
         {
-            std::cerr << "Error: Received out-of-order block ID." << std::endl;
+            std::cout << "Error: Received out-of-order block ID." << std::endl;
             close(sock);                   // Close the socket on error
             outputFile.close();            // Close the output file
             remove(localFilePath.c_str()); // Delete the partially downloaded file
@@ -920,7 +917,7 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
         // Write the received data to the output file
         if (!outputFile.write(data.data(), data.size()))
         {
-            std::cerr << "Error: Failed to write data to the file." << std::endl;
+            std::cout << "Error: Failed to write data to the file." << std::endl;
             close(sock);                   // Close the socket on error
             outputFile.close();            // Close the output file
             remove(localFilePath.c_str()); // Delete the partially downloaded file
@@ -937,7 +934,7 @@ int receive_file(int sock, const std::string &hostname, int port, const std::str
             {
                 if (!sendAck(sock, blockID, hostname, serverPort, params))
                 {
-                    std::cerr << "Error: Failed to send ACK before receiving DATA." << std::endl;
+                    std::cout << "Error: Failed to send ACK before receiving DATA." << std::endl;
                     close(sock);                   // Close the socket on error
                     outputFile.close();            // Close the output file
                     remove(localFilePath.c_str()); // Delete the partially downloaded file
@@ -981,7 +978,7 @@ bool parseTFTPParameters(const std::string &Oparamstring, TFTPOparams &Oparams)
             }
             else
             {
-                std::cerr << "Chybná hodnota parametru blksize: " << blksize << std::endl;
+                std::cout << "Chybná hodnota parametru blksize: " << blksize << std::endl;
                 return false;
             }
         }
@@ -996,7 +993,7 @@ bool parseTFTPParameters(const std::string &Oparamstring, TFTPOparams &Oparams)
             }
             else
             {
-                std::cerr << "Chybná hodnota parametru timeout: " << maxTimeout << std::endl;
+                std::cout << "Chybná hodnota parametru timeout: " << maxTimeout << std::endl;
                 return false;
             }
         }
@@ -1011,19 +1008,19 @@ bool parseTFTPParameters(const std::string &Oparamstring, TFTPOparams &Oparams)
             }
             else
             {
-                std::cerr << "Chybná hodnota parametru tsize: " << transfersize << std::endl;
+                std::cout << "Chybná hodnota parametru tsize: " << transfersize << std::endl;
                 return false;
             }
         }
         else
         {
-            std::cerr << "Neznámý parametr: " << paramName << std::endl;
+            std::cout << "Neznámý parametr: " << paramName << std::endl;
             return false;
         }
     }
     else
     {
-        std::cerr << "Nesprávný formát parametrů." << std::endl;
+        std::cout << "Nesprávný formát parametrů." << std::endl;
         return false;
     }
 
@@ -1070,7 +1067,7 @@ int main(int argc, char *argv[])
         {
             if (!parseTFTPParameters(argv[++i], Oparams))
             {
-                std::cerr << "Chyba při parsování parametrů." << std::endl;
+                std::cout << "Chyba při parsování parametrů." << std::endl;
                 return 1;
             }
         }
@@ -1078,7 +1075,7 @@ int main(int argc, char *argv[])
 
     if (hostname.empty() || localFilePath.empty())
     {
-        std::cerr << "Usage: tftp-client -h hostname -f [filepath] -t dest_filepath [-p port]" << std::endl;
+        std::cout << "Usage: tftp-client -h hostname -f [filepath] -t dest_filepath [-p port]" << std::endl;
         return 1;
     }
 
@@ -1089,7 +1086,7 @@ int main(int argc, char *argv[])
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock == -1)
     {
-        std::cerr << "Error: Failed to create socket." << std::endl;
+        std::cout << "Error: Failed to create socket." << std::endl;
         return 1;
     }
 
@@ -1117,7 +1114,7 @@ int main(int argc, char *argv[])
     }
     else
     {
-        std::cerr << "Error: You must specify either -f or -t option to send or receive a file, respectively." << std::endl;
+        std::cout << "Error: You must specify either -f or -t option to send or receive a file, respectively." << std::endl;
         close(sock);
         return 1;
     }

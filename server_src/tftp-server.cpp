@@ -10,13 +10,11 @@
 #include <csignal>
 #include <sys/statvfs.h>
 #include <filesystem>
-
 #include <chrono>
 #include <thread>
+
 // TODO
-//      pořešit cout a cerr
-//      pořešit všude timeout
-//      ověřit chybový stavy client error sending
+//      ověřit chybový stavy client error sending a vypisování v3ude
 //      code review
 //      ověřit na referenčním stroji
 //      odelat file exists
@@ -85,7 +83,7 @@ int handleIncomingPacket(int sockfd, sockaddr_in &clientAddr, int opcode)
 
     default:
         sendError(sockfd, ERROR_ILLEGAL_OPERATION, "Illegal operation", clientAddr);
-        std::cerr << "Illegal operation detected!" << std::endl;
+        std::cout << "Illegal operation detected!" << std::endl;
         return 1;
     }
 }
@@ -106,7 +104,7 @@ uint16_t checkDiskSpace(int size_of_file, const std::string &path)
     }
     else
     {
-        std::cerr << "Error getting disk space information." << std::endl;
+        std::cout << "Error getting disk space information." << std::endl;
         return ERROR_UNDEFINED;
     }
 
@@ -142,7 +140,7 @@ bool sendDataPacket(int sockfd, sockaddr_in &clientAddr, uint16_t blockNum, cons
 
     if (sentBytes == -1)
     {
-        std::cerr << "Error sending DATA packet for block " << blockNum << std::endl;
+        std::cout << "Error sending DATA packet for block " << blockNum << std::endl;
         return false;
     }
 
@@ -205,7 +203,7 @@ bool sendOACK(int sockfd, sockaddr_in &clientAddr, std::map<std::string, int> &o
     // Check for errors
     if (sentBytes == -1)
     {
-        std::cerr << "Error sending OACK packet" << std::endl;
+        std::cout << "Error sending OACK packet" << std::endl;
         return false;
     }
 
@@ -263,7 +261,7 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filena
 
         if (!ackReceived)
         {
-            std::cerr << "Failed to receive ACK after multiple retries" << std::endl;
+            std::cout << "Failed to receive ACK after multiple retries" << std::endl;
             file.close();
             return false;
         }
@@ -313,14 +311,14 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filena
 
             if (!ackReceived)
             {
-                std::cerr << "Failed to receive ACK for block " << blockNum << " after multiple retries" << std::endl;
+                std::cout << "Failed to receive ACK for block " << blockNum << " after multiple retries" << std::endl;
                 file.close();
                 return false;
             }
 
             if (bytesRead < params.blksize)
             {
-                std::cerr << "No more data to send" << std::endl;
+                std::cout << "No more data to send" << std::endl;
             }
 
             blockNum++;
@@ -349,7 +347,7 @@ bool sendFileData(int sockfd, sockaddr_in &clientAddr, const std::string &filena
         // Čekat na potvrzení pro poslední prázdný DATA packet
         if (!receiveAck(sockfd, blockNum, clientAddr, params.timeout))
         {
-            std::cerr << "Failed to receive ACK for the last null DATA packet" << std::endl;
+            std::cout << "Failed to receive ACK for the last null DATA packet" << std::endl;
             file.close();
             return false;
         }
@@ -373,7 +371,7 @@ bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr, 
     tv.tv_usec = 0;
     if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0)
     {
-        std::cerr << "Failed to set socket timeout" << std::endl;
+        std::cout << "Failed to set socket timeout" << std::endl;
         return false;
     }
 
@@ -385,10 +383,10 @@ bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr, 
         {
             if (errno == EAGAIN || errno == EWOULDBLOCK)
             {
-                std::cerr << "Timeout waiting for ACK packet" << std::endl;
+                std::cout << "Timeout waiting for ACK packet" << std::endl;
                 return false;
             }
-            std::cerr << "Error receiving ACK packet" << std::endl;
+            std::cout << "Error receiving ACK packet" << std::endl;
             sendError(sockfd, ERROR_UNDEFINED, "Error receiving ACK packet", clientAddr);
 
             return false;
@@ -397,7 +395,7 @@ bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr, 
         if (bytesReceived < sizeof(uint16_t) * 2)
         {
             // Invalid ACK packet
-            std::cerr << "Received an invalid ACK packet" << std::endl;
+            std::cout << "Received an invalid ACK packet" << std::endl;
             sendError(sockfd, ERROR_UNDEFINED, "Received an invalid ACK packet", clientAddr);
 
             return false;
@@ -425,7 +423,7 @@ bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr, 
             else
             {
                 // Received an out-of-order ACK (unexpected)
-                std::cerr << "Received an unexpected ACK for block " << blockNum << std::endl;
+                std::cout << "Received an unexpected ACK for block " << blockNum << std::endl;
                 sendError(sockfd, ERROR_UNKNOWN_TRANSFER_ID, "Unexpected ACK ID for block", clientAddr);
                 return false;
             }
@@ -433,7 +431,7 @@ bool receiveAck(int sockfd, uint16_t expectedBlockNum, sockaddr_in &clientAddr, 
         else
         {
             // Received an unexpected packet (not an ACK)
-            std::cerr << "Received an unexpected packet with opcode " << opcode << std::endl;
+            std::cout << "Received an unexpected packet with opcode " << opcode << std::endl;
             sendError(sockfd, ERROR_ILLEGAL_OPERATION, "ERROR_ILLEGAL_OPERATION", clientAddr);
             return false;
         }
@@ -453,7 +451,7 @@ bool receiveDataPacket(int sockfd, sockaddr_in &clientAddr, sockaddr_in &serverA
     tv.tv_usec = 0;
     if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0)
     {
-        std::cerr << "Failed to set socket timeout" << std::endl;
+        std::cout << "Failed to set socket timeout" << std::endl;
         return false;
     }
 
@@ -463,17 +461,17 @@ bool receiveDataPacket(int sockfd, sockaddr_in &clientAddr, sockaddr_in &serverA
     {
         if (errno == EAGAIN || errno == EWOULDBLOCK)
         {
-            std::cerr << "Timeout waiting for DATA packet" << std::endl;
+            std::cout << "Timeout waiting for DATA packet" << std::endl;
             return false;
         }
-        std::cerr << "Error receiving DATA packet" << std::endl;
+        std::cout << "Error receiving DATA packet" << std::endl;
         return false;
     }
 
     if (bytesReceived < sizeof(uint16_t) * 2)
     {
         // Invalid DATA packet
-        std::cerr << "Received an invalid DATA packet" << std::endl;
+        std::cout << "Received an invalid DATA packet" << std::endl;
         return false;
     }
 
@@ -508,14 +506,14 @@ bool receiveDataPacket(int sockfd, sockaddr_in &clientAddr, sockaddr_in &serverA
         else if (blockNum < expectedBlockNum)
         {
             // Received a duplicate DATA packet (ignore)
-            std::cerr << "Received a duplicate DATA packet for block " << blockNum << std::endl;
+            std::cout << "Received a duplicate DATA packet for block " << blockNum << std::endl;
             sendError(sockfd, ERROR_UNKNOWN_TRANSFER_ID, "Duplicate DATA packet", clientAddr);
             return false;
         }
         else
         {
             // Received an out-of-order DATA packet (unexpected)
-            std::cerr << "Received an unexpected DATA packet for block " << blockNum << std::endl;
+            std::cout << "Received an unexpected DATA packet for block " << blockNum << std::endl;
             sendError(sockfd, ERROR_UNKNOWN_TRANSFER_ID, "Unexpected DATA packet", clientAddr);
             return false;
         }
@@ -523,7 +521,7 @@ bool receiveDataPacket(int sockfd, sockaddr_in &clientAddr, sockaddr_in &serverA
     else
     {
         // Received an unexpected packet (not a DATA packet)
-        std::cerr << "Received an unexpected packet with opcode " << opcode << std::endl;
+        std::cout << "Received an unexpected packet with opcode " << opcode << std::endl;
         sendError(sockfd, ERROR_ILLEGAL_OPERATION, "Unexpected packet with opcode", clientAddr);
         return false;
     }
@@ -540,7 +538,7 @@ bool sendAck(int sockfd, sockaddr_in &clientAddr, uint16_t blockNum)
 
     if (sentBytes == -1)
     {
-        std::cerr << "Error sending ACK packet for block " << blockNum << std::endl;
+        std::cout << "Error sending ACK packet for block " << blockNum << std::endl;
         return false;
     }
 
@@ -561,7 +559,7 @@ bool hasOptions(TFTPPacket &requestPacket, std::string &filename, std::string &m
     // Check if the null terminator is found and the filename is not empty
     if (filenameLength == 0 || filenameLength >= MAX_DATA_SIZE)
     {
-        std::cerr << "Invalid filename in the request packet." << std::endl;
+        std::cout << "Invalid filename in the request packet." << std::endl;
         return false;
     }
 
@@ -574,7 +572,7 @@ bool hasOptions(TFTPPacket &requestPacket, std::string &filename, std::string &m
     // Check if the mode is "octet" or "netascii"
     if (modeLength == 0 || modeLength >= MAX_DATA_SIZE)
     {
-        std::cerr << "Unsupported transfer mode in the request packet." << std::endl;
+        std::cout << "Unsupported transfer mode in the request packet." << std::endl;
         return false;
     }
 
@@ -602,7 +600,7 @@ bool hasOptions(TFTPPacket &requestPacket, std::string &filename, std::string &m
 
         if (optionValueLength == 0)
         {
-            std::cerr << "Malformed option in the request packet." << std::endl;
+            std::cout << "Malformed option in the request packet." << std::endl;
             return false;
         }
 
@@ -616,7 +614,7 @@ bool hasOptions(TFTPPacket &requestPacket, std::string &filename, std::string &m
         }
         catch (const std::exception &e)
         {
-            std::cerr << "Invalid option value: " << optionValueStr << std::endl;
+            std::cout << "Invalid option value: " << optionValueStr << std::endl;
             return false;
         }
     }
@@ -656,13 +654,13 @@ void runTFTPServer(int port, const std::string &root_dirpath)
     int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     if (sockfd < 0)
     {
-        std::cerr << "Error creating socket" << std::endl;
+        std::cout << "Error creating socket" << std::endl;
         return;
     }
 
     if (chdir(root_dirpath.c_str()) != 0)
     {
-        std::cerr << "Error: Failed to change to root directory: " << root_dirpath << std::endl;
+        std::cout << "Error: Failed to change to root directory: " << root_dirpath << std::endl;
         return;
     }
 
@@ -674,7 +672,7 @@ void runTFTPServer(int port, const std::string &root_dirpath)
 
     if (bind(sockfd, (struct sockaddr *)&serverAddr, sizeof(serverAddr)) < 0)
     {
-        std::cerr << "Error binding socket" << std::endl;
+        std::cout << "Error binding socket" << std::endl;
         close(sockfd);
         return;
     }
@@ -706,7 +704,7 @@ void runTFTPServer(int port, const std::string &root_dirpath)
 
         if (bytesReceived < 0)
         {
-            std::cerr << "Error receiving packet" << std::endl;
+            std::cout << "Error receiving packet" << std::endl;
             continue;
         }
 
@@ -740,7 +738,7 @@ void runTFTPServer(int port, const std::string &root_dirpath)
 
             if (!sendFileData(sockfd, clientAddr, filename, options_map, params))
             {
-                std::cerr << "Error sending file data" << std::endl;
+                std::cout << "Error sending file data" << std::endl;
             }
         }
         else if (opcode == WRQ)
@@ -831,7 +829,7 @@ void runTFTPServer(int port, const std::string &root_dirpath)
                             {
                                 if (!sendAck(sockfd, clientAddr, blockNum - 1))
                                 {
-                                    std::cerr << "Error sending initial ACK" << std::endl;
+                                    std::cout << "Error sending initial ACK" << std::endl;
                                     file.close();
                                     continue;
                                 }
@@ -841,14 +839,14 @@ void runTFTPServer(int port, const std::string &root_dirpath)
 
                     if (!dataPacketReceived)
                     {
-                        std::cerr << "Failed to receive DATA packet for block " << blockNum << " after multiple retries" << std::endl;
+                        std::cout << "Failed to receive DATA packet for block " << blockNum << " after multiple retries" << std::endl;
                         break;
                     }
 
                     // Send ACK for the received block
                     if (!sendAck(sockfd, clientAddr, blockNum))
                     {
-                        std::cerr << "Error sending ACK for block " << blockNum << std::endl;
+                        std::cout << "Error sending ACK for block " << blockNum << std::endl;
                         break;
                     }
 
@@ -899,7 +897,7 @@ int main(int argc, char *argv[])
             }
             else
             {
-                std::cerr << "Error: Missing value for '-p' option" << std::endl;
+                std::cout << "Error: Missing value for '-p' option" << std::endl;
                 return 1;
             }
         }
@@ -911,7 +909,7 @@ int main(int argc, char *argv[])
 
     if (root_dirpath.empty())
     {
-        std::cerr << "Error: root_dirpath must be specified" << std::endl;
+        std::cout << "Error: root_dirpath must be specified" << std::endl;
         return 1;
     }
 
