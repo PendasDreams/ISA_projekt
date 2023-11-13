@@ -1,0 +1,114 @@
+# TFTP Server
+
+## Author
+
+- Name: Denis Novosád
+- Login: xnovos14
+
+## Date of Creation
+
+- 13.11.2023
+
+## Description
+
+This program is a TFTP (Trivial File Transfer Protocol) server, implemented in C++. It allows clients to request files for download (Read Requests - RRQ) and upload files (Write Requests - WRQ) using the TFTP protocol. The server listens on a specified port and serves files from a root directory. It supports optional parameters, including block size, timeout, and transfer size, as per the TFTP RFC specification (RFC 1350).
+
+### Features
+
+- Support for RRQ (Read Requests) to download files.
+- Support for WRQ (Write Requests) to upload files.
+- Optional parameters like block size, timeout, and transfer size as specified in the RFC.
+- Error handling for various TFTP error codes and invalid requests.
+
+## Usage
+
+To run the TFTP server, execute the compiled binary with the following command:
+
+./tftp-server [-p port] root_dirpath
+
+Replace `root_dirpath` with the root directory path where your TFTP server should operate. By default, the server listens on port 69, which is the standard TFTP port.
+
+### Options:
+
+- `-p PORT`: Specify a custom port number (default is 69).
+
+## Example Usage
+
+To start the TFTP server on port 12345 and serve files from the directory "/tftp_root," you can run the following command:
+
+./tftp_server -p 12345 /tftp_root
+
+#### Omezení
+
+- Tento server byl vyvinut pro demonstrační účely a nemusí být vhodný pro produkční nasazení.
+- Neprovádí složité kontroly oprávnění a bezpečnostních opatření.
+- Nepodporuje komplexní chybové zprávy a obnovu přenosu v případě chyby.
+
+# TFTP Client
+
+## Description
+
+This is a TFTP (Trivial File Transfer Protocol) client implemented in C++. The client allows users to upload files to a TFTP server and download files from a TFTP server. It supports both binary and text mode transfers, automatic determination of the TFTP transfer mode based on file content, and optional parameters for configuring block size, timeout, and total transfer size.
+
+### Features
+
+- Upload files to a TFTP server.
+- Download files from a TFTP server.
+- Automatic determination of transfer mode (netascii or octet).
+- Configurable block size, timeout, and total transfer size.
+- Support for TFTP error handling and acknowledgments.
+
+## Usage
+
+./tftp-client -h hostname [-p port] [-f filepath] -t dest_filepath [--option]
+
+### Options
+
+- `-h [hostname]`: Specify the hostname of the TFTP server.
+- `-p [port]`: Specify the port number to use (default: 69).
+- `-f [remote_filepath]`: Specify the remote file path on the server, if missing program will ask for local file path for upload.
+- `-t [local_filepath]`: Specify the local file path for upload or download.
+- `[--option]`: Optional parameters for communication with the server.
+
+### Optional Parameters
+
+- `-blksize`: Set the block size for data packets (default: 512 bytes).
+- `-timeout`: Set the timeout value in seconds (default: 5 seconds).
+- `-tsize`: Set the total transfer size for the file (default: unlimited).
+
+## Example Usage
+
+To upload file to a TFTP server with blockzie 8000 bytes, size of file is 226933 bytes and timeout is 10s :
+
+echo "root_dirpath_client/copy.png" | ./tftp-client -h 127.0.0.1 -p 69 -t copy.png --option "tsize 226933" --option "blksize 8000" --option "timeout 10"
+
+To download file from a TFTP server:
+
+./tftp-client -h example.com -p 69 -f /path/on/server/file.txt -t /path/to/local/downloaded_file.txt
+
+#### Omezení
+
+- Tento klient byl vyvinut pro demonstrační účely a nemusí být vhodný pro produkční nasazení.
+- Nepodporuje komplexní chybové zprávy a obnovu přenosu v případě chyby.
+- Nepodporuje také podporu pro základní autentizaci nebo šifrování přenosu.
+
+## Compilation with Makefile
+
+A Makefile is provided, allowing you to compile the TFTP client code easily. Simply use the following command to compile:
+
+make
+
+The Makefile will compile the code and generate the executable `tftp-client` and `tftp-server`, which you can use as described above.
+
+If you want to clean up the generated object files and executables, you can use the following command:
+
+make clean
+
+## List of Submitted Files
+
+- tftp_server.cpp: The source code for the TFTP server.
+- tftp_server.h: The header file for the TFTP server.
+- tftp_client.cpp
+- tftp_client.h
+- README.md
+- Makefile

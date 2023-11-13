@@ -1068,7 +1068,7 @@ int main(int argc, char *argv[])
 
     if (hostname.empty() || localFilePath.empty())
     {
-        std::cout << "Usage: tftp-client -h hostname -f [filepath] -t dest_filepath [-p port]" << std::endl;
+        std::cout << "Usage: tftp-client -h hostname [-p port] [-f filepath] -t dest_filepath [--option]" << std::endl;
         return 1;
     }
 

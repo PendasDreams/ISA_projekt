@@ -6,11 +6,6 @@
 
 #include "tftp-server.h"
 
-// TODO
-//      code review + komnety
-//      ověřit na referenčním stroji
-//      dokumentace
-
 bool fileExists(const std::string &filepath)
 {
     std::ifstream file(filepath.c_str());
